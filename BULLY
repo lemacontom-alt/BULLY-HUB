@@ -1,6 +1,6 @@
--- ==========================================================
--- 🔥 SCRULI HUB AMBER V69 (ESP, ADMIN, 3D FRONT & MISC) 🔥
--- ==========================================================
+_G.ScruliHubAuth = true
+
+
 if not game:IsLoaded() then 
     game.Loaded:Wait() 
 end
