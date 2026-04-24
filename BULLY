@@ -33,6 +33,8 @@ local AnimalsData = require(Datas:WaitForChild("Animals"))
 local AnimalsShared = require(Shared:WaitForChild("Animals"))
 local NumberUtils = require(Utils:WaitForChild("NumberUtils"))
 
+
+
 -- =========================================================
 -- [SAFE GUI CONTAINER & ANTI-DUPLICATION]
 -- =========================================================
@@ -118,7 +120,21 @@ local updateTargetListUI
 local DefaultConfig = {
     StealHighest = false, StealPriority = false, StealNearest = false, InstantSteal = true, ManualTargetUID = nil,
     AutoDestroyTurrets = false, AutoBuy = false, AutoKickOnSteal = false, AutoTpOnFailedSteal = false,
-    TpSettings = { Tool = "Flying Carpet", TpKey = "T", CloneKey = "V", TpOnLoad = false, Speed = 2, MinGenForTp = "5m", InfiniteJump = false, CarpetSpeedKey = "Q" },
+    
+    -- 💡 VARIABLES POUR SAUVEGARDER L'ÉTAT DES MENUS
+    AutoSellOnSteal = false,
+    ShowAutoSeller = true,
+    TpMenuVisible = false,
+    DarkMode = false,
+
+    TpSettings = { 
+        Tool = "Flying Carpet", TpKey = "T", CloneKey = "V", TpOnLoad = false, Speed = 2, MinGenForTp = "5m", Mode = "Front",
+        JumpPower = 180,       -- Puissance du saut initial
+        MoveToBaseSpeed = 250, -- Vitesse pour aller à la base
+        CloneDelay = 0.3,      -- Temps d'attente pour le clone
+        AlignSpeed = 0.05      -- Vitesse d'alignement final au pet
+    },
+
     ResetKey = "X", KickKey = "Y", MenuKey = "J", DesyncKey = "U",
     VisibleSP = true, VisibleAP = true, VisibleTP = true, VisibleAdmin = true, VisibleCommandPanel = true,
     FPSBoost = false, TracerEnabled = false, LineToBase = false, XrayEnabled = false,
@@ -128,7 +144,7 @@ local DefaultConfig = {
     AntiRagdollV2 = false, AntiBeeDisco = false, FOV = 70,
     AutoUnlockOnSteal = false, ShowUnlockButton = false,
     AutoResetOnBalloon = false, ClickToAPKeybind = "L", ProximityAPKeybind = "P"
-}
+} -- C'est cette accolade qui manquait pour fermer la table !
 
 local Config = {}
 for k, v in pairs(DefaultConfig) do
@@ -138,12 +154,14 @@ for k, v in pairs(DefaultConfig) do
     else Config[k] = v end
 end
 
+
 local function LoadConfig()
     if readfile and isfile and isfile(saveFile) then
         local ok, data = pcall(function() return HttpService:JSONDecode(readfile(saveFile)) end)
         if ok and type(data) == "table" then
             for k, v in pairs(data) do
-                if type(v) == "table" and type(Config[k]) == "table" then
+                if type(v) == "table" then
+                    if type(Config[k]) ~= "table" then Config[k] = {} end
                     for subK, subV in pairs(v) do 
                         if subV ~= nil then Config[k][subK] = subV end
                     end
@@ -153,6 +171,14 @@ local function LoadConfig()
             end
         end
     end
+    
+    -- Valeurs par défaut vitales si manquantes
+    if Config.VisibleSP == nil then Config.VisibleSP = true end
+    if Config.VisibleAP == nil then Config.VisibleAP = true end
+    if not Config.TpSettings.Offset then Config.TpSettings.Offset = 5 end
+    if not Config.TpSettings.JumpHeight then Config.TpSettings.JumpHeight = 50 end
+    if not Config.TpSettings.Speed then Config.TpSettings.Speed = 250 end
+    
     Config.MenuKey = "J"
     Config.VisibleAP = true
     if not Config.DesyncKey then Config.DesyncKey = "U" end
@@ -162,8 +188,9 @@ LoadConfig()
 local function SaveConfig()
     if writefile then
         pcall(function() writefile(saveFile, HttpService:JSONEncode(Config)) end)
-    end
 end
+end
+    
 
 local Theme = {
     Obsidian = Color3.fromRGB(15, 12, 14), Volcanic = Color3.fromRGB(30, 26, 32), Ash = Color3.fromRGB(160, 160, 160), 
@@ -1114,6 +1141,7 @@ instantClone = function()
         cloner:Activate()
         task.wait(0.05)
         
+        -- On attend que le clone apparaisse
         local cloneName = tostring(LocalPlayer.UserId) .. "_Clone"
         for _ = 1, 100 do
             if Workspace:FindFirstChild(cloneName) then break end
@@ -1127,6 +1155,7 @@ instantClone = function()
         if not tpButton then return end
         tpButton.Visible = true
         
+        -- On clique sur le bouton pour se TP sur le clone
         if firesignal then
             firesignal(tpButton.MouseButton1Up)
         else
@@ -1137,10 +1166,21 @@ instantClone = function()
             task.wait()
             vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
         end
+        
+        -- 💡 LE FIX "ONE-SHOT" EST ICI : 
+        -- On vérifie `not _G.hasDesyncedOnClone` pour s'assurer qu'on ne l'a pas encore fait.
+        if Config.AutoDesyncOnClone and _G.toggleDesyncFunc and not _G.hasDesyncedOnClone then 
+            MiscState.desyncEnabled = _G.toggleDesyncFunc(true) 
+            
+            -- On crée la mémoire : le script se souviendra qu'il a déjà fait le boulot
+            _G.hasDesyncedOnClone = true 
+        end
+        
     end)
     
     _G.isCloning = false
 end
+
 
 -- ================= NEW UNLOCK LOGIC =================
 local function fireAutoUnlock(targetPlotName)
@@ -1305,29 +1345,34 @@ runAutoSnipe = function()
         local carpetName = Config.TpSettings.Tool
         local carpet = game:GetService("Players").LocalPlayer.Backpack:FindFirstChild(carpetName) or char:FindFirstChild(carpetName)
         
-        if _G.TP_Mode == "Front" then
+if _G.TP_Mode == "Front" then
             -- ==========================================
-            -- 🔴 MODE FRONT : ORIGINAL SCRULI HUB (Fixé au sol)
+            -- 🔴 MODE FRONT : DYNAMIQUE (Basé sur le Ping)
             -- ==========================================
             if carpet then hum:EquipTool(carpet) end
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            task.wait(0.05)
+            task.wait(0.01)
+
+
+-- 📡 Utilisation des réglages du panel TP Config
+            local waitTime = (1 / (Config.TpSettings.MoveToBaseSpeed or 250)) * 5
+            local tpVelocity = Config.TpSettings.JumpPower or 180
             
             local isSecondFloor = exactPos.Y > 10
             local plotIdx = getClosestBaseIdx(exactPos)
             local targetBasePos = isSecondFloor and BASES_HIGH[plotIdx] or BASES_LOW[plotIdx]
             
             local jumpStart = tick()
-            while hrp.Position.Y < math.max(targetBasePos.Y, 50) and (tick() - jumpStart) < 3 do
-                hrp.AssemblyLinearVelocity = Vector3.new(0, 120, 0)
+            while hrp.Position.Y < math.max(targetBasePos.Y, 50) and (tick() - jumpStart) < 2 do
+                hrp.AssemblyLinearVelocity = Vector3.new(0, Config.TpSettings.JumpPower, 0)
                 game:GetService("RunService").Heartbeat:Wait()
             end
 
             hrp.Anchored = true
-            for i = 1, 15 do
+            for i = 1, 10 do
                 if (hrp.Position - targetBasePos).Magnitude > 1 then
                     hrp.CFrame = CFrame.new(targetBasePos)
-                    task.wait(0.05) 
+                    task.wait(waitTime) 
                 end
             end
             hrp.Anchored = false
@@ -1337,17 +1382,14 @@ runAutoSnipe = function()
                 local bestSpot, minDst = CLONE_POSITIONS_FLOOR[1], math.huge
                 for _, v in ipairs(CLONE_POSITIONS_FLOOR) do
                     local d = (targetPart.Position - v).Magnitude
-                    if d < minDst then
-                        minDst = d
-                        bestSpot = v
-                    end
+                    if d < minDst then minDst = d; bestSpot = v end
                 end
                 
                 hrp.Anchored = true
-                for i = 1, 6 do
+                for i = 1, 5 do
                     if (hrp.Position - bestSpot).Magnitude > 3 then
                         hrp.CFrame = CFrame.new(bestSpot)
-                        task.wait(0.05) 
+                        task.wait(waitTime) 
                     end
                 end
                 hrp.Anchored = false
@@ -1356,31 +1398,25 @@ runAutoSnipe = function()
             local bestFace, minFace = FACE_TARGETS[1], math.huge
             for _, v in ipairs(FACE_TARGETS) do
                 local d = (hrp.Position - v).Magnitude
-                if d < minFace then
-                    minFace = d
-                    bestFace = v
-                end
+                if d < minFace then minFace = d; bestFace = v end
             end
-            task.wait(0.1)
+            task.wait(waitTime * 2)
             hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bestFace.X, hrp.Position.Y, bestFace.Z))
             
             if isSecondFloor or not _G._isTargetPlotUnlocked(targetPetData.plot) then 
-                walkForward(0.4)
-                task.wait(0.4)
-                if Config.AutoDesyncOnClone and _G.toggleDesyncFunc then MiscState.desyncEnabled = _G.toggleDesyncFunc(true) end
+                walkForward(0.3)
+                task.wait(Config.TpSettings.CloneDelay)
                 instantClone()
                 while _G.isCloning do task.wait() end 
-                task.wait(0.2)
+                task.wait(0.15)
                 
                 char = game:GetService("Players").LocalPlayer.Character
                 hrp = char and char:FindFirstChild("HumanoidRootPart")
                 hum = char and char:FindFirstChild("Humanoid")
                 if not hrp or not hum then return end
                 carpet = game:GetService("Players").LocalPlayer.Backpack:FindFirstChild(carpetName) or char:FindFirstChild(carpetName)
-            else
-                if Config.AutoDesyncOnClone and _G.toggleDesyncFunc then MiscState.desyncEnabled = _G.toggleDesyncFunc(true) end
-            end
-            
+           end
+
         elseif _G.TP_Mode == "Side" then
             -- ==========================================
             -- 🔵 MODE SIDE : LA GLISSADE FURTIVE DU MOGGER HUB
@@ -1474,7 +1510,6 @@ runAutoSnipe = function()
             -- Clone de la cible
             walkForward(0.4)
             task.wait(0.4)
-            if Config.AutoDesyncOnClone and _G.toggleDesyncFunc then MiscState.desyncEnabled = _G.toggleDesyncFunc(true) end
             instantClone()
             while _G.isCloning do task.wait() end 
             task.wait(0.2)
@@ -1504,27 +1539,30 @@ runAutoSnipe = function()
             plat.Transparency = 0.3
             
             if shouldAnchor then hrp.Anchored = true end
-            for i = 1, 10 do 
+         for i = 1, 10 do 
                 if not game:GetService("Players").LocalPlayer:GetAttribute("Stealing") then 
                     hrp.AssemblyLinearVelocity = Vector3.zero
                     hrp.CFrame = CFrame.new(airPos)
-                    task.wait(0.05) 
+                    task.wait(Config.TpSettings.AlignSpeed or 0.05) -- Lié au slider Align Speed
                 end 
             end
+
+
             if shouldAnchor then hrp.Anchored = false end
             hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             
             task.delay(10, function() plat:Destroy() end)
         else
             if shouldAnchor then hrp.Anchored = true end
-            for i = 1, 10 do 
+for i = 1, 10 do 
                 if game:GetService("Players").LocalPlayer:GetAttribute("Stealing") then break end
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 if (hrp.Position - targetPart.Position).Magnitude > 3 then
                     hrp.CFrame = CFrame.new(targetPart.Position)
-                    task.wait(0.05)
+                    task.wait(Config.TpSettings.AlignSpeed or 0.05) -- Lié au slider Align Speed
                 end 
             end
+
             if shouldAnchor then hrp.Anchored = false end
             hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
         end
@@ -1658,43 +1696,79 @@ task.spawn(function()
     end
 end)
 
--- 2. LE STEAL SPAMMER (SAFE MODE ANTI-KICK)
+-- 2. LE STEAL SPAMMER (AMÉLIORÉ AVEC BYPASS PROMPT)
 task.spawn(function()
+    local HOLD_DURATION = 0.5
+    
+    -- Fonction pour trouver la pièce physique du bouton (Nouveau script)
+    local function getPromptPart(prompt)
+        local parent = prompt.Parent
+        if parent:IsA("BasePart") then return parent end
+        if parent:IsA("Model") then
+            return parent.PrimaryPart or parent:FindFirstChildWhichIsA("BasePart")
+        end
+        if parent:IsA("Attachment") then return parent.Parent end
+        return parent:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    -- Nouvelle méthode de vol ultra-rapide (Bypass)
+    local function triggerPrompt(prompt)
+        if not prompt or not prompt:IsDescendantOf(workspace) then return end
+
+        prompt.MaxActivationDistance = 9e9
+        prompt.RequiresLineOfSight = false
+        prompt.ClickablePrompt = true
+
+        if Config.InstantSteal and _G.executeInstantSteal then
+            pcall(function() _G.executeInstantSteal(prompt) end)
+        else
+            local usedFire = pcall(function()
+                fireproximityprompt(prompt, 9e9, HOLD_DURATION)
+            end)
+
+            if not usedFire then
+                task.spawn(function() -- En arrière-plan pour ne pas bloquer les autres vols
+                    pcall(function()
+                        prompt:InputHoldBegin()
+                        task.wait(HOLD_DURATION)
+                        prompt:InputHoldEnd()
+                    end)
+                end)
+            end
+        end
+    end
+
     while true do
-        task.wait(0.15) -- 🛡️ LE FIX EST ICI : On vole 6 fois par seconde max au lieu de 60 !
+        task.wait(0.15) 
         
         local autoStealEnabled = (Config.StealHighest or Config.StealNearest or Config.StealPriority or Config.ManualTargetUID)
         if not autoStealEnabled then continue end
         
-        local targetData = nil
+        local promptToTrigger = nil
+        local plotObj = nil
         
-        -- 🥷 SI NEAREST EST ACTIVÉ : On vole autour de soi
+        -- 🥷 SI NEAREST EST ACTIVÉ : La nouvelle méthode globale 
         if Config.StealNearest then
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if hrp then
-                local bestDist = math.huge
-                local pets = SharedState.AllAnimalsCache or {}
-                for _, p in ipairs(pets) do
-                    local plotObj = Workspace.Plots:FindFirstChild(p.plot)
-                    if plotObj then
-                        local podiums = plotObj:FindFirstChild("AnimalPodiums")
-                        local pod = podiums and podiums:FindFirstChild(tostring(p.slot))
-                        local baseObj = pod and pod:FindFirstChild("Base")
-                        local tPart = baseObj and (baseObj:FindFirstChild("Spawn") or baseObj)
-                        
-                        if tPart then
-                            local pos = nil
-                            if tPart:IsA("Model") then
-                                pcall(function() pos = tPart:GetPivot().Position end)
-                            elseif tPart:IsA("BasePart") then
-                                pos = tPart.Position
-                            end
-                            
-                            if pos then
-                                local d = (hrp.Position - pos).Magnitude
-                                if d < bestDist then
-                                    bestDist = d
-                                    targetData = p
+                local minDist = math.huge
+                local plots = workspace:FindFirstChild("Plots")
+                if plots then
+                    for _, desc in pairs(plots:GetDescendants()) do
+                        if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
+                            local part = getPromptPart(desc)
+                            if part then
+                                local dist = (hrp.Position - part.Position).Magnitude
+                                if dist < minDist then
+                                    minDist = dist
+                                    promptToTrigger = desc
+                                    
+                                    -- Retrouve le stand (Plot) pour débloquer automatiquement plus tard
+                                    local current = desc
+                                    while current and current.Parent and current.Parent ~= plots do
+                                        current = current.Parent
+                                    end
+                                    if current then plotObj = current end
                                 end
                             end
                         end
@@ -1702,83 +1776,83 @@ task.spawn(function()
                 end
             end
         else
-            -- 🎯 SINON (Priority/Highest/Manual) : On vole la cible principale sélectionnée
-            targetData = SharedState.SelectedPetData
-        end
-
-        if not targetData then continue end
-        
-        local plotObj = Workspace.Plots:FindFirstChild(targetData.plot)
-        if not plotObj then continue end
-        
-        local podiums = plotObj:FindFirstChild("AnimalPodiums")
-        if not podiums then continue end
-        
-        local pod = podiums:FindFirstChild(targetData.slot)
-        local base = pod and pod:FindFirstChild("Base")
-        local spawn = base and base:FindFirstChild("Spawn")
-        local att = spawn and spawn:FindFirstChild("PromptAttachment")
-        local prompt = att and att:FindFirstChildOfClass("ProximityPrompt")
-        
-        if prompt and prompt.Enabled and prompt.ActionText == "Steal" then
-            prompt.RequiresLineOfSight = false
-            
-            if Config.InstantSteal and _G.executeInstantSteal then
-                pcall(function() _G.executeInstantSteal(prompt) end)
-            else
-                if fireproximityprompt then 
-                    pcall(function()
-                        fireproximityprompt(prompt, 1, true)
-                        fireproximityprompt(prompt, 0, true)
-                        fireproximityprompt(prompt) 
-                    end)
-                end
-            end
-            
-            if Config.AutoUnlockOnSteal then 
-                local unlockFolder = plotObj:FindFirstChild("Unlock")
-                if unlockFolder then
-                    for _, item in ipairs(unlockFolder:GetChildren()) do
-                        for _, desc in ipairs(item:GetDescendants()) do
-                            if desc:IsA("ProximityPrompt") and desc.Enabled then
-                                if fireproximityprompt then pcall(function() fireproximityprompt(desc) end) end
+            -- 🎯 SINON (Priority/Highest/Manual) : Cible exacte calculée par le cerveau de ton Hub
+            local targetData = SharedState.SelectedPetData
+            if targetData then
+                plotObj = workspace.Plots:FindFirstChild(targetData.plot)
+                if plotObj then
+                    local podiums = plotObj:FindFirstChild("AnimalPodiums")
+                    local pod = podiums and podiums:FindFirstChild(tostring(targetData.slot))
+                    
+                    if pod then
+                        -- On récupère directement le bon bouton de vol de la cible prioritaire/highest
+                        for _, desc in pairs(pod:GetDescendants()) do
+                            if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
+                                promptToTrigger = desc
+                                break
                             end
                         end
                     end
                 end
             end
         end
+
+        -- 🚀 ACTIVATION DU VOL BIONIQUE
+        if promptToTrigger then
+            triggerPrompt(promptToTrigger)
+            
+            -- L'auto-unlock des vitres (Fonction d'origine de ton Hub, toujours active)
+            if Config.AutoUnlockOnSteal and plotObj then 
+                pcall(function()
+                    local unlockFolder = plotObj:FindFirstChild("Unlock")
+                    if unlockFolder then
+                        for _, item in ipairs(unlockFolder:GetChildren()) do
+                            for _, desc in ipairs(item:GetDescendants()) do
+                                if desc:IsA("ProximityPrompt") and desc.Enabled then
+                                    if fireproximityprompt then pcall(function() fireproximityprompt(desc) end) end
+                                end
+                            end
+                        end
+                    end
+                end)
+            end
+        end
     end
 end)
+
 -- =========================================================
--- 🦾 AUTO TP ON SCRIPT LOAD
+-- 🦾 AUTO TP ON SCRIPT LOAD (PRIORITÉ TP + HUB DÉCALÉ)
 -- =========================================================
-if Config.TpSettings.TpOnLoad then
+if Config.TpSettings and Config.TpSettings.TpOnLoad then
     task.spawn(function()
+        -- 1. On force le mode ("Front" ou "Side") pour éviter le TP buggé
+        _G.TP_Mode = Config.TpSettings.Mode or "Front"
+        Config.VisibleTP = true 
+        
+        -- 2. On laisse 0.5s au script pour allumer son radar et créer les menus en arrière-plan
+        task.wait(0.5)
+        
+        -- 3. ON CACHE LE HUB : Pour ne pas te perturber pendant le TP
+        pcall(function() if SG then SG.Enabled = false end end)
+        pcall(function() if HUD then HUD.Enabled = false end end)
+        
+        -- 4. On attend que ton radar détecte une vraie cible (Sécurité anti-bug)
         local waitLimit = 0
-        while not SharedState.SelectedPetData and waitLimit < 150 do
-            task.wait(0.2)
+        while not SharedState.SelectedPetData and waitLimit < 50 do
+            task.wait(0.1)
             waitLimit = waitLimit + 1
         end
-        if not SharedState.SelectedPetData then return end
         
-        local minGenStr = Config.TpSettings.MinGenForTp or ""
-        local minGen = 0
-        local num, suffix = minGenStr:match("^([%d%.]+)([kmbKMB]?)$")
-        if num then
-            num = tonumber(num)
-            suffix = suffix:lower()
-            if suffix == "k" then num = num * 1e3
-            elseif suffix == "m" then num = num * 1e6
-            elseif suffix == "b" then num = num * 1e9 end
-            minGen = num
-        end
+        -- 5. CIBLE TROUVÉE : On lance ton vrai Auto Snipe !
+        pcall(runAutoSnipe)
         
-        local cache = SharedState.AllAnimalsCache or {}
-        local highestGen = (cache[1] and cache[1].genValue) or 0
-        if highestGen >= minGen then 
-            pcall(runAutoSnipe)
-        end
+        -- 6. LA PAUSE DE 3 SECONDES (Comme tu l'as demandé)
+        -- Le TP se fait tranquillement sans aucun lag graphique
+        task.wait(3)
+        
+        -- 7. LE TP EST FINI : On affiche enfin le Hub et les menus !
+        pcall(function() if SG then SG.Enabled = true end end)
+        pcall(function() if HUD then HUD.Enabled = true end end)
     end)
 end
 
@@ -1805,23 +1879,10 @@ task.spawn(function()
         return false
     end
 
-    local function applyVisuals(target)
-        for _, d in ipairs(target:GetDescendants()) do
-            if d:IsA("BasePart") and d ~= target then
-                d.Transparency = 0.5
-                d.CanCollide = false
-                d.CanTouch = false
-                d.CanQuery = false
-            elseif d:IsA("BillboardGui") and d.Name ~= "SentryLabel" then
-                d:Destroy()
-            elseif d:IsA("Decal") or d:IsA("Texture") then
-                d.Transparency = 0.5
-            end
-        end
-        if target:IsA("BasePart") and target.Name ~= "ProxyVisual" then
-            target.Transparency = 1
-            target.CanCollide = false
-        end
+local function applyVisuals(target)
+        -- On ne fait plus rien ici pour garder la tourelle intacte et visible
+        -- On enlève juste les lignes qui mettaient la transparence à 1 ou qui détruisaient les GUI
+        return
     end
 
     local function getClosestSentry()
@@ -2930,7 +2991,7 @@ local titleLbl = Instance.new("TextLabel", hudFrame)
 titleLbl.Size = UDim2.new(0, 200, 1, 0)
 titleLbl.Position = UDim2.new(0, 65, 0, 0)
 titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "SCRULI HUB V3.5"
+titleLbl.Text = "SCRULI HUB V3.6"
 titleLbl.Font = Enum.Font.GothamBlack
 titleLbl.TextSize = 16
 titleLbl.TextColor3 = Theme.White
@@ -3443,6 +3504,105 @@ sideTog = CreateiOSToggle(pAuto, "Mode: SIDE", _G.TP_Mode == "Side", function(va
     end
 end)
 
+-- =========================================================
+-- 🛠️ TP CONFIG : MENU SANS BUG GRIS + SAUVEGARDE RÉPARÉE
+-- =========================================================
+local btnTPSettings = Instance.new("TextButton", pAuto)
+btnTPSettings.Size = UDim2.new(1, -16, 0, 28)
+btnTPSettings.BackgroundColor3 = Theme.Volcanic
+btnTPSettings.Text = "⚙️ TP CONFIGURATION"
+btnTPSettings.TextColor3 = Theme.AmberMain
+btnTPSettings.Font = Enum.Font.GothamBlack
+btnTPSettings.TextSize = 10
+Instance.new("UICorner", btnTPSettings).CornerRadius = UDim.new(0, 6)
+local tsStroke = Instance.new("UIStroke", btnTPSettings)
+tsStroke.Color = Theme.Stroke
+tsStroke.Thickness = 1
+
+local TPS = Instance.new("Frame")
+TPS.Name = "Scruli_TPSettings_Final"
+TPS.Parent = SG 
+TPS.ZIndex = 200
+
+-- 1. LA FONCTION OFFICIELLE CRÉE LE MENU (et le met en Visible = true)
+local tpsCont = ApplyPanelStyle(TPS, 250, 280, 0.5, 0.4, "SCRULI HUB V3", "Teleport Tuning", "TPS")
+
+-- 2. LE FIX : On applique la sauvegarde JUSTE APRÈS, pour refermer le menu s'il le faut !
+if Config.TpMenuVisible == nil then Config.TpMenuVisible = false end
+TPS.Visible = Config.TpMenuVisible 
+
+local tpsLay = Instance.new("UIListLayout", tpsCont)
+tpsLay.Padding = UDim.new(0, 10)
+tpsLay.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+local function CreateBrightBar(parent, text, min, max, currentKey, isDecimal)
+    local sFrame = Instance.new("Frame", parent)
+    sFrame.Size = UDim2.new(1, -10, 0, 42)
+    sFrame.BackgroundTransparency = 1
+    
+    local val = Config.TpSettings[currentKey] or min
+    
+    local sTitle = Instance.new("TextLabel", sFrame)
+    sTitle.Size = UDim2.new(1, 0, 0, 15)
+    sTitle.Text = text .. ": " .. (isDecimal and string.format("%.2f", val) or tostring(val))
+    -- 💡 TEXTE BLANC PUR POUR ÉCLAIRER
+    sTitle.TextColor3 = Color3.fromRGB(255, 255, 255) 
+    sTitle.Font = Enum.Font.GothamBold
+    sTitle.TextSize = 11
+    sTitle.TextXAlignment = Enum.TextXAlignment.Left
+    sTitle.BackgroundTransparency = 1
+
+    local sBg = Instance.new("Frame", sFrame)
+    sBg.Size = UDim2.new(1, 0, 0, 6)
+    sBg.Position = UDim2.new(0, 0, 0, 24)
+    -- 💡 BARRE GRIS CLAIR POUR LE CONTRASTE
+    sBg.BackgroundColor3 = Color3.fromRGB(200, 200, 200) 
+    Instance.new("UICorner", sBg).CornerRadius = UDim.new(1, 0)
+    
+    local sFill = Instance.new("Frame", sBg)
+    sFill.Size = UDim2.new((val - min) / (max - min), 0, 1, 0)
+    sFill.BackgroundColor3 = Theme.AmberMain
+    Instance.new("UICorner", sFill).CornerRadius = UDim.new(1, 0)
+    
+    -- POINT BLANC POUR MIEUX VISER SUR MOBILE
+    local glow = Instance.new("Frame", sFill)
+    glow.Size = UDim2.new(0, 8, 1, 6)
+    glow.Position = UDim2.new(1, -4, 0, -3)
+    glow.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    Instance.new("UICorner", glow).CornerRadius = UDim.new(1, 0)
+
+    local sBtn = Instance.new("TextButton", sBg)
+    sBtn.Size = UDim2.new(1, 0, 1, 0)
+    sBtn.BackgroundTransparency = 1
+    sBtn.Text = ""
+
+    local dragging = false
+    sBtn.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = true end end)
+    UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false; SaveConfig() end end)
+    
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local percent = math.clamp((UserInputService:GetMouseLocation().X - sBg.AbsolutePosition.X) / sBg.AbsoluteSize.X, 0, 1)
+            sFill.Size = UDim2.new(percent, 0, 1, 0)
+            local newVal = min + (max - min) * percent
+            if not isDecimal then newVal = math.floor(newVal) end
+            Config.TpSettings[currentKey] = newVal
+            sTitle.Text = text .. ": " .. (isDecimal and string.format("%.2f", newVal) or tostring(newVal))
+        end
+    end)
+end
+
+CreateBrightBar(tpsCont, "Jump Power", 50, 400, "JumpPower", false)
+CreateBrightBar(tpsCont, "TP Speed", 50, 600, "MoveToBaseSpeed", false)
+CreateBrightBar(tpsCont, "Clone Delay", 0.05, 1.5, "CloneDelay", true)
+CreateBrightBar(tpsCont, "Align Speed", 0.01, 0.2, "AlignSpeed", true)
+
+btnTPSettings.MouseButton1Click:Connect(function()
+    TPS.Visible = not TPS.Visible
+    Config.TpMenuVisible = TPS.Visible
+    SaveConfig()
+end)
+
 CreateSectionHeader(pAuto, "SETTINGS")
 
 CreateiOSToggle(pAuto, "Enable TP Priority", Config.StealPriority or false, function(val)
@@ -3486,6 +3646,13 @@ CreateiOSToggle(pAuto, "Auto TP back to pet", Config.AutoTpOnFailedSteal or fals
     SaveConfig() 
 end)
 
+-- NOUVEAU BOUTON : TP BASÉ SUR LE PING
+CreateiOSToggle(pAuto, "TP based on ping ", Config.TpSettings.DynamicPingTP or false, function(val)
+    Config.TpSettings.DynamicPingTP = val
+    if SaveConfig then SaveConfig() end
+end)
+
+
 
 
 CreateSectionHeader(pEsp, "ESP SETTINGS")
@@ -3499,10 +3666,18 @@ CreateiOSToggle(pEsp, "Subspace Mine Esp", Config.SubspaceMineESP or false, func
 CreateiOSToggle(pEsp, "Duel Base ESP", Config.DuelBaseESP or false, function(val) Config.DuelBaseESP = val; if not val and _G.clearDuelBaseVisuals then _G.clearDuelBaseVisuals() end; SaveConfig() end)
 CreateiOSToggle(pEsp, "Steal Radar ESP", Config.StealRadarESP or false, function(val) Config.StealRadarESP = val; if not val and _G.clearStealRadarESP then _G.clearStealRadarESP() end; SaveConfig() end)
 CreateiOSToggle(pEsp, "Base Timer ESP", Config.BaseTimerESP or false, function(val) Config.BaseTimerESP = val; if not val and _G.clearBaseTimerESP then _G.clearBaseTimerESP() end; SaveConfig() end)
+CreateiOSToggle(pEsp, "Dark Mode", Config.DarkMode or false, function(val) 
+    Config.DarkMode = val
+    if _G.toggleDarkMode then _G.toggleDarkMode(val) end
+    SaveConfig() 
+end)
+
 
 CreateSectionHeader(pEsp, "ALERTS SETTINGS")
 CreateiOSToggle(pEsp, "Priority Pet Alerts", Config.AlertsEnabled or false, function(val) Config.AlertsEnabled = val; SaveConfig() end)
 CreateTextInput(pEsp, "Alert Sound ID", Config.AlertSoundID or "rbxassetid://140718666763137", function(val) Config.AlertSoundID = val; SaveConfig() end)
+
+
 
 CreateSectionHeader(pUi, "PANELS VISIBILITY")
 CreateiOSToggle(pUi, "Show Steal Panel", Config.VisibleSP or false, function(val) Config.VisibleSP = val; if SP then SP.Visible = val end; SaveConfig() end)
@@ -3510,6 +3685,19 @@ CreateiOSToggle(pUi, "Show Actions Panel", Config.VisibleAP or false, function(v
 CreateiOSToggle(pUi, "Show Target Panel", Config.VisibleTP or false, function(val) Config.VisibleTP = val; if TP then TP.Visible = val end; SaveConfig() end)
 CreateiOSToggle(pUi, "Show Admin Panel", Config.VisibleAdmin or false, function(val) Config.VisibleAdmin = val; if ADM then ADM.Visible = val end; SaveConfig() end)
 CreateiOSToggle(pUi, "Show Command Panel", Config.VisibleCommandPanel or false, function(val) Config.VisibleCommandPanel = val; if CMD then CMD.Visible = val end; SaveConfig() end)
+-- 💡 CORRECTION DU BOUTON AUTO SELLER :
+local sellerState = true
+if Config.ShowAutoSeller ~= nil then sellerState = Config.ShowAutoSeller end
+
+CreateiOSToggle(pUi, "Show Auto Seller", sellerState, function(val) 
+    Config.ShowAutoSeller = val
+    SaveConfig()
+    local sellGui = game:GetService("CoreGui"):FindFirstChild("RemoteSellGUI") or (gethui and gethui():FindFirstChild("RemoteSellGUI"))
+    if sellGui then 
+        sellGui.Enabled = val 
+    end
+end)
+
 
 
 CreateSectionHeader(pMisc, "DESYNC")
@@ -4712,23 +4900,8 @@ task.spawn(function()
     end 
 end)
 
--- =========================================================
--- [AUTO RESET ON BALLOON LOGIC]
--- =========================================================
-task.spawn(function()
-    local balloonPhrase = 'ran "balloon" on you'
-    while true do
-        task.wait(1)
-        if not Config.AutoResetOnBalloon then continue end
-        for _, gui in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
-            local txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.Text
-            if txt and string.find(txt, balloonPhrase) then
-                if _G.executeReset then pcall(_G.executeReset) end
-                break
-            end
-        end
-    end
-end)
+
+
 
 -- =========================================================
 -- AUTO KICK ON STEAL (BULLYHUB SECURE ENGINE)
@@ -4941,11 +5114,12 @@ task.spawn(function()
                                 local verticalDiff = targetPart.Position.Y - hrp.Position.Y
                                 
                                 if verticalDiff > 2 then
-                                    -- ☁️ 3ÈME ÉTAGE : Création de la plateforme
-                                    local airPos = Vector3.new(targetPart.Position.X, targetPart.Position.Y - 8, targetPart.Position.Z)
-                                    local plat = Instance.new("Part", Workspace)
-                                    plat.Size = Vector3.new(3, 1, 3)
-                                    plat.Position = airPos - Vector3.new(0, 5, 0)
+-- ☁️ 3ÈME ÉTAGE : Création de la plateforme
+local airPos = Vector3.new(targetPart.Position.X, targetPart.Position.Y - 8, targetPart.Position.Z)
+local plat = Instance.new("Part", Workspace)
+plat.Size = Vector3.new(3, 1, 3)
+-- 💡 J'ai changé le '5' en '3' pour que la plateforme (stud) apparaisse plus haut, juste sous tes pieds !
+plat.Position = airPos - Vector3.new(0, 3, 0)
                                     plat.Anchored = true
                                     plat.Transparency = 0.3
                                     
@@ -5280,25 +5454,31 @@ end)
 -- 🎈 AUTO RESET ON BALLOON & 🧹 CLEAN ERROR GUI ENGINE
 -- =========================================================
 task.spawn(function()
-    local balloonPhrase = 'ran "balloon" on you'
     local CoreGui = game:GetService("CoreGui")
     
     while true do
         task.wait(1)
         
-        -- 🎈 Logic: Auto Reset On Balloon
+        -- 🎈 Logic: Auto Reset On Balloon (1 SEULE FOIS)
         if Config.AutoResetOnBalloon then 
             pcall(function()
                 for _, gui in ipairs(game:GetService("Players").LocalPlayer.PlayerGui:GetDescendants()) do
                     local txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.Text
-                    if txt and string.find(txt, balloonPhrase) then
-                        if _G.executeReset then pcall(_G.executeReset) end
-                        break
+                    if txt then
+                        local textMinuscule = string.lower(txt)
+                        -- On détecte exactement "balloon on you" (ou ballon)
+                        if string.find(textMinuscule, "balloon on you") or string.find(textMinuscule, "ballon on you") then
+                            if _G.executeReset then pcall(_G.executeReset) end
+                            -- 💡 LE FIX EST ICI : On détruit le texte de l'écran pour ne pas reset en boucle !
+                            gui:Destroy() 
+                            break
+                        end
                     end
                 end
             end)
         end
 
+   
         -- 🧹 Logic: Clean Error GUI (Détruit les écrans de Kick/Crash Roblox)
         if Config.CleanErrorGUIs then
             pcall(function()
@@ -5340,4 +5520,568 @@ task.spawn(function()
     end
 end)
 
-print("scruli hub on top 📈")
+-- ==========================================================
+-- 🧠 BRAINROT SELLER - V24 (AUTO SELL SUR DELIVERY HITBOX + STEAL CHECK)
+-- ==========================================================
+
+task.spawn(function()
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Workspace = game:GetService("Workspace")
+    local CoreGui = game:GetService("CoreGui")
+    local UserInputService = game:GetService("UserInputService")
+    local HttpService = game:GetService("HttpService")
+    local player = Players.LocalPlayer
+
+    -- Nettoyage
+    if CoreGui:FindFirstChild("RemoteSellGUI") then
+        CoreGui.RemoteSellGUI:Destroy()
+    end
+
+    -- ==========================================
+    -- 📦 MODULES OFFICIELS (STRICTEMENT V14)
+    -- ==========================================
+    local Packages = ReplicatedStorage:WaitForChild("Packages")
+    local Datas = ReplicatedStorage:WaitForChild("Datas")
+    local Shared = ReplicatedStorage:WaitForChild("Shared")
+    local Utils = ReplicatedStorage:WaitForChild("Utils")
+
+    local Synchronizer = require(Packages:WaitForChild("Synchronizer"))
+    local AnimalsData = require(Datas:WaitForChild("Animals"))
+    local AnimalsShared = require(Shared:WaitForChild("Animals"))
+    local NumberUtils = require(Utils:WaitForChild("NumberUtils"))
+
+    local lockedPlot = nil
+    local availablePets = {}
+    local autoSellEnabled = false
+    local currentIndex = 1
+
+    -- ==========================================
+    -- 💾 SYSTÈME DE SAUVEGARDE DE POSITION
+    -- ==========================================
+    local SaveFileName = "Scruli_AutoSeller_Pos.txt"
+
+    local function loadSavedPosition()
+        if isfile and readfile and isfile(SaveFileName) then
+            local ok, result = pcall(function()
+                return HttpService:JSONDecode(readfile(SaveFileName))
+            end)
+            if ok and result and result.XScale then
+                return UDim2.new(result.XScale, result.XOffset, result.YScale, result.YOffset)
+            end
+        end
+        return UDim2.new(0.5, -120, 0.5, -140) -- Position par défaut au milieu
+    end
+
+    local function savePosition(udim2pos)
+        if writefile then
+            local data = {
+                XScale = udim2pos.X.Scale,
+                XOffset = udim2pos.X.Offset,
+                YScale = udim2pos.Y.Scale,
+                YOffset = udim2pos.Y.Offset
+            }
+            pcall(function()
+                writefile(SaveFileName, HttpService:JSONEncode(data))
+            end)
+        end
+    end
+
+    -- ==========================================
+    -- 🎨 THÈME OFFICIEL SCRULI HUB
+    -- ==========================================
+    local Theme = {
+        Obsidian = Color3.fromRGB(15, 12, 14),
+        Volcanic = Color3.fromRGB(30, 26, 32),
+        Ash = Color3.fromRGB(160, 160, 160),
+        White = Color3.fromRGB(245, 245, 245),
+        AmberMain = Color3.fromRGB(255, 120, 40),
+        AmberGlow = Color3.fromRGB(0, 0, 0),
+        Stroke = Color3.fromRGB(55, 48, 52),
+        AmberON = Color3.fromRGB(46, 204, 113),
+        Danger = Color3.fromRGB(200, 60, 70)
+    }
+
+    local function findMyPlot()
+        if lockedPlot and lockedPlot.Parent then return lockedPlot end
+        local plots = workspace:FindFirstChild("Plots")
+        if not plots then return nil end
+        for _, plot in ipairs(plots:GetChildren()) do
+            local sign = plot:FindFirstChild("PlotSign")
+            if sign then
+                local surfaceGui = sign:FindFirstChildWhichIsA("SurfaceGui", true)
+                local label = surfaceGui and surfaceGui:FindFirstChildWhichIsA("TextLabel", true)
+                if label and (label.Text:lower():find(player.Name:lower()) or label.Text:lower():find(player.DisplayName:lower())) then
+                    lockedPlot = plot; return plot
+                end
+            end
+        end
+        return nil
+    end
+
+-- 💡 CORRECTION DE L'INITIALISATION DU VENDEUR :
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "RemoteSellGUI"
+screenGui.ResetOnSpawn = false
+
+local startSellerState = true
+if Config.ShowAutoSeller ~= nil then startSellerState = Config.ShowAutoSeller end
+screenGui.Enabled = startSellerState
+
+pcall(function() screenGui.Parent = gethui and gethui() or CoreGui end)
+
+-- Initialisation du vrai/faux pour Auto Sell On Steal
+local autoSellEnabled = false
+if Config.AutoSellOnSteal ~= nil then autoSellEnabled = Config.AutoSellOnSteal end
+
+    local function MakeDraggable(topbar, frame)
+        local drag, start, pos
+        topbar.InputBegan:Connect(function(i) 
+            if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then 
+                drag = true; start = i.Position; pos = frame.Position 
+            end 
+        end)
+        UserInputService.InputChanged:Connect(function(i) 
+            if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then 
+                frame.Position = UDim2.new(pos.X.Scale, pos.X.Offset+(i.Position.X-start.X), pos.Y.Scale, pos.Y.Offset+(i.Position.Y-start.Y)) 
+            end 
+        end)
+        UserInputService.InputEnded:Connect(function(i) 
+            if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then 
+                if drag then
+                    drag = false
+                    -- SAUVEGARDE LA POSITION À LA FIN DU DÉPLACEMENT
+                    savePosition(frame.Position)
+                end
+            end 
+        end)
+    end
+
+    local function AddPremiumGlow(frame, radius, color)
+        local shadow = Instance.new("ImageLabel", frame)
+        shadow.BackgroundTransparency = 1
+        shadow.Position = UDim2.new(0, -radius, 0, -radius)
+        shadow.Size = UDim2.new(1, radius * 2, 1, radius * 2)
+        shadow.ZIndex = frame.ZIndex - 1
+        shadow.Image = "rbxassetid://1316045217"
+        shadow.ImageColor3 = color
+        shadow.ImageTransparency = 0.6
+        shadow.ScaleType = Enum.ScaleType.Slice
+        shadow.SliceCenter = Rect.new(10, 10, 118, 118)
+    end
+
+    local panel = Instance.new("Frame")
+    panel.Size = UDim2.new(0, 240, 0, 280)
+    panel.Position = loadSavedPosition() -- CHARGE L'ANCIENNE POSITION
+    panel.BackgroundColor3 = Theme.Obsidian
+    panel.BackgroundTransparency = 0.15
+    panel.Active = true
+    panel.Parent = screenGui
+
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 8)
+    Instance.new("UIStroke", panel).Color = Theme.Stroke
+    AddPremiumGlow(panel, 15, Theme.AmberGlow)
+
+    local top = Instance.new("Frame", panel)
+    top.Size = UDim2.new(1, 0, 0, 40)
+    top.BackgroundTransparency = 1
+    MakeDraggable(top, panel)
+
+    local tit = Instance.new("TextLabel", top)
+    tit.Size = UDim2.new(1, 0, 0, 20)
+    tit.Position = UDim2.new(0, 10, 0, 6)
+    tit.BackgroundTransparency = 1
+    tit.Text = "AUTO SELLER"
+    tit.Font = Enum.Font.GothamBlack
+    tit.TextColor3 = Theme.AmberMain
+    tit.TextSize = 14
+    tit.TextXAlignment = Enum.TextXAlignment.Left
+
+    local sub = Instance.new("TextLabel", top)
+    sub.Size = UDim2.new(1, 0, 0, 15)
+    sub.Position = UDim2.new(0, 10, 0, 22)
+    sub.BackgroundTransparency = 1
+    sub.Text = "auto seller"
+    sub.Font = Enum.Font.GothamMedium
+    sub.TextColor3 = Theme.Ash
+    sub.TextSize = 11
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+
+    local line = Instance.new("Frame", top)
+    line.Size = UDim2.new(1, -20, 0, 1)
+    line.Position = UDim2.new(0, 10, 1, 0)
+    line.BackgroundColor3 = Theme.Stroke
+    line.BorderSizePixel = 0
+
+    local cont = Instance.new("Frame", panel)
+    cont.Size = UDim2.new(1, -10, 1, -50)
+    cont.Position = UDim2.new(0, 5, 0, 45)
+    cont.BackgroundTransparency = 1
+
+    local btnLeft = Instance.new("TextButton", cont)
+    btnLeft.Size = UDim2.new(0, 25, 0, 25)
+    btnLeft.Position = UDim2.new(0, 15, 0, 25)
+    btnLeft.BackgroundColor3 = Theme.Volcanic
+    btnLeft.Text = "<"
+    btnLeft.TextColor3 = Theme.White
+    btnLeft.Font = Enum.Font.GothamBlack
+    Instance.new("UICorner", btnLeft).CornerRadius = UDim.new(0, 4)
+
+    local btnRight = Instance.new("TextButton", cont)
+    btnRight.Size = UDim2.new(0, 25, 0, 25)
+    btnRight.Position = UDim2.new(1, -40, 0, 25)
+    btnRight.BackgroundColor3 = Theme.Volcanic
+    btnRight.Text = ">"
+    btnRight.TextColor3 = Theme.White
+    btnRight.Font = Enum.Font.GothamBlack
+    Instance.new("UICorner", btnRight).CornerRadius = UDim.new(0, 4)
+
+    local imgBg = Instance.new("Frame", cont)
+    imgBg.Size = UDim2.new(0, 70, 0, 70)
+    imgBg.Position = UDim2.new(0.5, -35, 0, 5)
+    imgBg.BackgroundColor3 = Theme.Volcanic
+    Instance.new("UICorner", imgBg).CornerRadius = UDim.new(0, 6)
+    Instance.new("UIStroke", imgBg).Color = Theme.Stroke
+
+    local viewport = Instance.new("ViewportFrame", imgBg)
+    viewport.Size = UDim2.new(1, 0, 1, 0)
+    viewport.BackgroundTransparency = 1
+    viewport.Ambient = Color3.new(1, 1, 1)
+    viewport.LightColor = Color3.new(1, 1, 1)
+    viewport.LightDirection = Vector3.new(-1, -1, -1)
+    local cam = Instance.new("Camera", viewport)
+    cam.FieldOfView = 50
+    viewport.CurrentCamera = cam
+
+    local petNameLbl = Instance.new("TextLabel", cont)
+    petNameLbl.Size = UDim2.new(1, 0, 0, 20)
+    petNameLbl.Position = UDim2.new(0, 0, 0, 80)
+    petNameLbl.BackgroundTransparency = 1
+    petNameLbl.Text = "Recherche..."
+    petNameLbl.Font = Enum.Font.GothamBold
+    petNameLbl.TextColor3 = Theme.White
+    petNameLbl.TextSize = 13
+
+    local statusLbl = Instance.new("TextLabel", cont)
+    statusLbl.Size = UDim2.new(1, 0, 0, 20)
+    statusLbl.Position = UDim2.new(0, 0, 0, 100)
+    statusLbl.BackgroundTransparency = 1
+    statusLbl.Text = "(0 Available)"
+    statusLbl.Font = Enum.Font.GothamMedium
+    statusLbl.TextColor3 = Theme.Ash
+    statusLbl.TextSize = 11
+
+    local manualSellBtn = Instance.new("TextButton", cont)
+    manualSellBtn.Size = UDim2.new(1, -20, 0, 32)
+    manualSellBtn.Position = UDim2.new(0, 10, 0, 130)
+    manualSellBtn.BackgroundColor3 = Theme.Danger
+    manualSellBtn.Text = "SELL"
+    manualSellBtn.Font = Enum.Font.GothamBlack
+    manualSellBtn.TextColor3 = Theme.White
+    manualSellBtn.TextSize = 12
+    Instance.new("UICorner", manualSellBtn).CornerRadius = UDim.new(0, 6)
+
+    local autoBtn = Instance.new("Frame", cont)
+    autoBtn.Size = UDim2.new(1, -10, 0, 32)
+    autoBtn.Position = UDim2.new(0, 5, 0, 175)
+    autoBtn.BackgroundTransparency = 1
+
+    local btnLbl = Instance.new("TextLabel", autoBtn)
+    btnLbl.Size = UDim2.new(1, -65, 1, 0)
+    btnLbl.Position = UDim2.new(0, 5, 0, 0)
+    btnLbl.BackgroundTransparency = 1
+    btnLbl.Text = "Auto Sell on steal:"
+    btnLbl.Font = Enum.Font.GothamBold
+    btnLbl.TextColor3 = Theme.White
+    btnLbl.TextSize = 12
+    btnLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local btnClick = Instance.new("TextButton", autoBtn)
+    btnClick.Size = UDim2.new(0, 56, 0, 24)
+    btnClick.Position = UDim2.new(1, -60, 0.5, -12)
+    btnClick.BackgroundColor3 = Theme.Volcanic
+    btnClick.Text = "OFF"
+    btnClick.TextColor3 = Theme.Ash
+    btnClick.Font = Enum.Font.GothamBlack
+    btnClick.TextSize = 11
+    Instance.new("UICorner", btnClick).CornerRadius = UDim.new(0, 6)
+
+    local function getPetModelFromWorkspace(petName)
+        local foundModel = nil
+        pcall(function()
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if obj:IsA("Model") and obj.Name == petName then
+                    if obj:FindFirstChildWhichIsA("BasePart") then
+                        foundModel = obj
+                        break
+                    end
+                end
+            end
+        end)
+        return foundModel
+    end
+
+    local function updateDisplay()
+        viewport:ClearAllChildren()
+        if #availablePets == 0 then
+            petNameLbl.Text = "no brainrot"
+            statusLbl.Text = "(0 Available)"
+            manualSellBtn.BackgroundColor3 = Theme.Volcanic
+            manualSellBtn.Text = "..."
+            return
+        end
+
+        if currentIndex > #availablePets then currentIndex = 1 end
+        if currentIndex < 1 then currentIndex = #availablePets end
+
+        local pet = availablePets[currentIndex]
+        petNameLbl.Text = pet.name:upper()
+        statusLbl.Text = "(Slot #" .. pet.podiumNum .. ")"
+        manualSellBtn.BackgroundColor3 = Theme.Danger
+        manualSellBtn.Text = "SELL"
+
+        task.spawn(function()
+            local animalModel = getPetModelFromWorkspace(pet.modelIndex)
+            if animalModel then
+                local clone = animalModel:Clone()
+                for _, d in ipairs(clone:GetDescendants()) do 
+                    if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("GuiObject") or d:IsA("ProximityPrompt") or d:IsA("BillboardGui") then d:Destroy() end 
+                end
+                local cf, size = clone:GetBoundingBox()
+                local maxDim = math.max(size.X, size.Y, size.Z)
+                if maxDim == 0 then maxDim = 2 end
+                
+                -- ROTATION DU PET À 180°
+                clone:PivotTo(CFrame.new(0, -maxDim * 0.7, 0) * CFrame.Angles(0, math.rad(180), 0))
+                
+                clone.Parent = viewport
+                cam.CFrame = CFrame.lookAt(Vector3.new(-maxDim * 1.2, maxDim * 0.2, -maxDim * 1.5), Vector3.new(0, -maxDim * 0.5, 0))
+            end
+        end)
+    end
+
+    local function scanPlots()
+        local plot = findMyPlot()
+        if not plot then return end
+        local podiums = plot:FindFirstChild("AnimalPodiums")
+        if not podiums then return end
+
+        local channel = Synchronizer:Get(plot.Name)
+        local animalList = channel and channel:Get("AnimalList")
+        if not animalList then return end
+
+        local newPets = {}
+
+        for _, podium in ipairs(podiums:GetChildren()) do
+            local podiumNum = tonumber(podium.Name)
+            if podiumNum then
+                local base = podium:FindFirstChild("Base")
+                local spawn = base and base:FindFirstChild("Spawn")
+                if spawn and spawn:IsA("BasePart") then
+                    local attachment = spawn:FindFirstChild("PromptAttachment")
+                    if attachment then
+                        for _, pp in ipairs(attachment:GetChildren()) do
+                            if pp:IsA("ProximityPrompt") and (pp.ActionText or ""):sub(1, 4) == "Sell" then
+                                local petData = animalList[tostring(podiumNum)] or animalList[podiumNum]
+                                local finalName = "Inconnu"
+                                local modelIndex = "Unknown"
+                                
+                                if petData and type(petData) == "table" then
+                                    modelIndex = petData.Index
+                                    local aInfo = AnimalsData[modelIndex]
+                                    finalName = (aInfo and aInfo.DisplayName) or modelIndex
+                                end
+                                
+                                table.insert(newPets, {
+                                    podiumNum = podiumNum,
+                                    prompt = pp,
+                                    name = finalName,
+                                    modelIndex = modelIndex
+                                })
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        availablePets = newPets
+        if petNameLbl.Text == "not found" or petNameLbl.Text == "no brainrot" then
+            updateDisplay()
+        end
+    end
+
+    task.spawn(function()
+        while screenGui and screenGui.Parent do
+            pcall(scanPlots)
+            task.wait(2)
+        end
+    end)
+
+    btnLeft.MouseButton1Click:Connect(function()
+        if #availablePets > 0 then
+            currentIndex = currentIndex - 1
+            updateDisplay()
+        end
+    end)
+
+    btnRight.MouseButton1Click:Connect(function()
+        if #availablePets > 0 then
+            currentIndex = currentIndex + 1
+            updateDisplay()
+        end
+    end)
+
+    manualSellBtn.MouseButton1Click:Connect(function()
+        if #availablePets == 0 then return end
+        local petToSell = availablePets[currentIndex]
+        pcall(function()
+            if fireproximityprompt then 
+                fireproximityprompt(petToSell.prompt)
+            else
+                petToSell.prompt:InputBegan(Enum.UserInputType.MouseButton1)
+                task.wait()
+                petToSell.prompt:InputEnded(Enum.UserInputType.MouseButton1)
+            end
+        end)
+        manualSellBtn.Text = "SOLD!"
+        manualSellBtn.BackgroundColor3 = Theme.AmberON
+        task.wait(0.5)
+        manualSellBtn.Text = "SELL"
+        manualSellBtn.BackgroundColor3 = Theme.Danger
+        scanPlots()
+        updateDisplay()
+    end)
+
+    btnClick.Activated:Connect(function()
+        autoSellEnabled = not autoSellEnabled
+        if autoSellEnabled then
+            btnClick.BackgroundColor3 = Theme.AmberON
+            btnClick.TextColor3 = Theme.Obsidian
+            btnClick.Text = "ON"
+        else
+            btnClick.BackgroundColor3 = Theme.Volcanic
+            btnClick.TextColor3 = Theme.Ash
+            btnClick.Text = "OFF"
+        end
+    end)
+
+    -- ==========================================
+    -- 🚀 DÉTECTION DE DROP : PROXIMITÉ + VÉRIFICATION DU VOL
+    -- ==========================================
+    local function getPosition(obj)
+        if obj:IsA("Model") then
+            if obj.PrimaryPart then return obj.PrimaryPart.Position end
+            return obj:GetBoundingBox().Position
+        elseif obj:IsA("BasePart") then
+            return obj.Position
+        end
+        return nil
+    end
+
+    task.spawn(function()
+        local wasNearHitbox = false
+        
+        while task.wait(0.2) do
+            if not autoSellEnabled then 
+                wasNearHitbox = false
+                continue 
+            end
+            
+            local plot = findMyPlot()
+            if not plot then continue end
+            
+            -- Cherche la DeliveryHitbox dans NOTRE base uniquement
+            local hitbox = plot:FindFirstChild("DeliveryHitbox", true)
+            local character = player.Character
+            local hrp = character and character:FindFirstChild("HumanoidRootPart")
+            
+            if hitbox and hrp then
+                local hitboxPos = getPosition(hitbox)
+                if hitboxPos then
+                    local dist = (hrp.Position - hitboxPos).Magnitude
+                    
+                    -- Si on est très près de NOTRE base (en train de drop le pet)
+                    if dist <= 25 then
+                        if not wasNearHitbox then
+                            wasNearHitbox = true -- Marque qu'on vient d'entrer dans la zone
+                            
+                            -- VÉRIFICATION OFFICIELLE : Est-ce que le joueur est en train de voler ?
+                            local isStealing = player:GetAttribute("Stealing")
+                            
+                            if isStealing == true then
+                                -- Vend UN SEUL Brainrot AU HASARD
+                                if #availablePets > 0 then
+                                    local randomIndex = math.random(1, #availablePets)
+                                    local randomPet = availablePets[randomIndex]
+                                    
+                                    pcall(function()
+                                        if fireproximityprompt then 
+                                            fireproximityprompt(randomPet.prompt)
+                                        else
+                                            randomPet.prompt:InputBegan(Enum.UserInputType.MouseButton1)
+                                            task.wait()
+                                            randomPet.prompt:InputEnded(Enum.UserInputType.MouseButton1)
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                    else
+                        -- On s'éloigne de la hitbox, on réinitialise pour le prochain vol
+                        wasNearHitbox = false
+                    end
+                end
+            end
+        end
+    end)
+
+    updateDisplay()
+end)
+
+-- =========================================================
+-- 🌙 DARK MODE ENGINE (MODE NUIT)
+-- =========================================================
+task.spawn(function()
+    local Lighting = game:GetService("Lighting")
+    local RunService = game:GetService("RunService")
+    local OriginalLighting = {}
+    local darkModeConnection = nil
+
+    _G.toggleDarkMode = function(state)
+        Config.DarkMode = state
+        if state then
+            -- Sauvegarde la lumière de base du jeu
+            OriginalLighting.ClockTime = Lighting.ClockTime
+            OriginalLighting.Ambient = Lighting.Ambient
+            OriginalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
+            
+            -- Boucle pour forcer la nuit (bloque le jeu s'il essaie de remettre le jour)
+            if darkModeConnection then darkModeConnection:Disconnect() end
+            darkModeConnection = RunService.Heartbeat:Connect(function()
+                Lighting.ClockTime = 0 -- Forcé à Minuit
+                Lighting.Ambient = Color3.fromRGB(15, 15, 20) -- Nuit très sombre
+                Lighting.OutdoorAmbient = Color3.fromRGB(15, 15, 20)
+            end)
+        else
+            -- Remet la lumière normale si on décoche
+            if darkModeConnection then
+                darkModeConnection:Disconnect()
+                darkModeConnection = nil
+            end
+            if OriginalLighting.ClockTime then
+                Lighting.ClockTime = OriginalLighting.ClockTime
+                Lighting.Ambient = OriginalLighting.Ambient
+                Lighting.OutdoorAmbient = OriginalLighting.OutdoorAmbient
+            end
+        end
+    end
+
+    -- Active le mode nuit au démarrage si c'était sauvegardé sur ON
+    if Config.DarkMode then
+        _G.toggleDarkMode(true)
+    end
+end)
+
+print("niger ?")
