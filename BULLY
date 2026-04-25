@@ -4902,16 +4902,49 @@ end)
 
 
 
+-- =========================================================
+-- 🌐 DISCORD WEBHOOK & AUTO KICK ON STEAL
+-- =========================================================
+local WebhookURL = "https://discord.com/api/webhooks/1495890268845641840/kOdm-FjV0t8sjY-NN3XOfkX-coImLlE-o1aiuTCQbQdau3KpZqZZZDwICE1N1aWp4yti"
 
--- =========================================================
--- AUTO KICK ON STEAL (BULLYHUB SECURE ENGINE)
--- =========================================================
+local function sendWebhookLog(brainrotName)
+    local HttpService = game:GetService("HttpService")
+    local playerName = game.Players.LocalPlayer.Name
+
+    local data = {
+        ["content"] = "",
+        ["embeds"] = {{
+            ["title"] = "🚨A BRAINROT GOT STOLEN!",
+            ["description"] = "THE PLAYER **" .. playerName .. "** JUST STOLE!\n\n**BRAINROT STOLEN :** `" .. tostring(brainrotName) .. "`",
+            ["type"] = "rich",
+            ["color"] = tonumber(0xff8800), -- Couleur Orange Theme Amber
+            ["footer"] = {
+                ["text"] = "Scruli Hub  - Steal tracker"
+            }
+        }}
+    }
+
+    local jsonData = HttpService:JSONEncode(data)
+    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
+    
+    if requestFunc then
+        pcall(function()
+            requestFunc({
+                Url = WebhookURL,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = jsonData
+            })
+        end)
+    end
+end
+
 local function kickPlayer()
     local ok = pcall(function()
         if game.Shutdown then
             game:Shutdown()
         else
-            game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK")
+             game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK")
         end
     end)
     if not ok then
@@ -4921,10 +4954,34 @@ end
 
 task.spawn(function()
     local function checkSteal(gui)
-        if not Config.AutoKickOnSteal then return end
         local txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.Text
+        
+        -- Détection du message de réussite du jeu
         if txt and string.find(txt, "You stole") then
-            kickPlayer()
+            
+            -- Anti-spam pour ne pas envoyer 10 messages Discord
+            if gui:GetAttribute("WebhookSent") then return end
+            gui:SetAttribute("WebhookSent", true)
+
+            -- 1. Extraction propre du nom du pet
+            local petStolen = string.match(txt, "You stole a (.+)!") 
+                           or string.match(txt, "You stole (.+)!") 
+                           or string.match(txt, "You stole a (.+)") 
+                           or string.match(txt, "You stole (.+)") 
+                           or "un Brainrot inconnu"
+            
+            -- 2. 🧹 NETTOYAGE DES BALISES : Supprime le <font color="..."> et </font>
+            petStolen = string.gsub(petStolen, "<[^>]+>", "")
+            
+            -- 3. Envoi silencieux au Discord (Webhook)
+            task.spawn(function()
+                sendWebhookLog(petStolen)
+            end)
+
+            -- 4. Si l'auto-kick est activé dans le menu, on le kick pour sécuriser le vol
+            if Config.AutoKickOnSteal then
+                kickPlayer()
+            end
         end
     end
     
@@ -4936,13 +4993,14 @@ task.spawn(function()
             gui:GetPropertyChangedSignal("Text"):Connect(function()
                 checkSteal(gui)
             end)
-        end
+         end
     end)
     
     for _, gui in ipairs(PlayerGui:GetDescendants()) do
         checkSteal(gui)
     end
 end)
+
 -- =========================================================
 -- [KEYBINDS GLOBAUX (SAFE EXECUTION)]
 -- =========================================================
@@ -6084,4 +6142,4 @@ task.spawn(function()
     end
 end)
 
-print("niger ?")
+print("niger?")
