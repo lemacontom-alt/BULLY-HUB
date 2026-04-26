@@ -4901,9 +4901,8 @@ task.spawn(function()
 end)
 
 
-
 -- =========================================================
--- 🌐 DISCORD WEBHOOK & AUTO KICK ON STEAL
+-- 🌐 DISCORD WEBHOOK, SITE LOG & AUTO KICK ON STEAL
 -- =========================================================
 local WebhookURL = "https://discord.com/api/webhooks/1495890268845641840/kOdm-FjV0t8sjY-NN3XOfkX-coImLlE-o1aiuTCQbQdau3KpZqZZZDwICE1N1aWp4yti"
 
@@ -4934,6 +4933,24 @@ local function sendWebhookLog(brainrotName)
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = jsonData
+            })
+        end)
+    end
+end
+
+-- NOUVEAU : Fonction pour envoyer le vol au site web
+local function logStealToSite(brainrotName)
+    local key = getgenv().scruli_key or ""
+    if key == "" then return end
+    
+    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
+    if requestFunc then
+        pcall(function()
+            requestFunc({
+                Url = "https://scruli-api-pro.onrender.com/v4/log-steal",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = game:GetService("HttpService"):JSONEncode({ key = key, item = brainrotName })
             })
         end)
     end
@@ -4973,9 +4990,10 @@ task.spawn(function()
             -- 2. 🧹 NETTOYAGE DES BALISES : Supprime le <font color="..."> et </font>
             petStolen = string.gsub(petStolen, "<[^>]+>", "")
             
-            -- 3. Envoi silencieux au Discord (Webhook)
+            -- 3. Envoi silencieux au Discord (Webhook) ET AU SITE WEB
             task.spawn(function()
                 sendWebhookLog(petStolen)
+                logStealToSite(petStolen) -- ICI : Appel vers ton API
             end)
 
             -- 4. Si l'auto-kick est activé dans le menu, on le kick pour sécuriser le vol
