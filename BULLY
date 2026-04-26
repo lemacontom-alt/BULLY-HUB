@@ -4902,10 +4902,14 @@ end)
 
 
 -- =========================================================
--- 🌐 DISCORD WEBHOOK, SITE LOG & AUTO KICK ON STEAL
+-- 🌐 SCRULI HUB - DISCORD WEBHOOK & LIVE SITE TRACKER
 -- =========================================================
 local WebhookURL = "https://discord.com/api/webhooks/1495890268845641840/kOdm-FjV0t8sjY-NN3XOfkX-coImLlE-o1aiuTCQbQdau3KpZqZZZDwICE1N1aWp4yti"
 
+-- Configuration locale si elle n'existe pas dans ton menu
+local Config = Config or { AutoKickOnSteal = false } 
+
+-- 1️⃣ FONCTION : Envoi vers Discord
 local function sendWebhookLog(brainrotName)
     local HttpService = game:GetService("HttpService")
     local playerName = game.Players.LocalPlayer.Name
@@ -4916,10 +4920,8 @@ local function sendWebhookLog(brainrotName)
             ["title"] = "🚨A BRAINROT GOT STOLEN!",
             ["description"] = "THE PLAYER **" .. playerName .. "** JUST STOLE!\n\n**BRAINROT STOLEN :** `" .. tostring(brainrotName) .. "`",
             ["type"] = "rich",
-            ["color"] = tonumber(0xff8800), -- Couleur Orange Theme Amber
-            ["footer"] = {
-                ["text"] = "Scruli Hub  - Steal tracker"
-            }
+            ["color"] = tonumber(0xff8800),
+            ["footer"] = { ["text"] = "Scruli Hub  - Steal tracker" }
         }}
     }
 
@@ -4935,39 +4937,52 @@ local function sendWebhookLog(brainrotName)
                 Body = jsonData
             })
         end)
+        print("✅ SCRULI: Webhook Discord envoyé pour l'item -> " .. tostring(brainrotName))
     end
 end
 
--- NOUVEAU : Fonction pour envoyer le vol au site web
+-- 2️⃣ FONCTION : Envoi vers ton Dashboard (API Render)
 local function logStealToSite(brainrotName)
-    local key = getgenv().scruli_key or ""
-    if key == "" then return end
+    local key = getgenv().scruli_key
+    
+    if not key or key == "" then 
+        warn("⚠️ SCRULI: Pas de clé de licence (getgenv().scruli_key) ! Le vol n'ira pas sur le site web.")
+        return 
+    end
     
     local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
     if requestFunc then
-        pcall(function()
-            requestFunc({
+        local success, err = pcall(function()
+            local response = requestFunc({
                 Url = "https://scruli-api-pro.onrender.com/v4/log-steal",
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = game:GetService("HttpService"):JSONEncode({ key = key, item = brainrotName })
             })
+            print("🌐 SCRULI: Vol envoyé au Dashboard ! (Status: " .. tostring(response and response.StatusCode or "Inconnu") .. ")")
         end)
+        
+        if not success then
+            warn("❌ SCRULI: Erreur de connexion à l'API ->", err)
+        end
+    else
+        warn("❌ SCRULI: Ton exécuteur ne supporte pas les requêtes HTTP.")
     end
 end
 
+-- 3️⃣ FONCTION : Sécurité (Auto Kick)
 local function kickPlayer()
+    print("👢 SCRULI: Auto-Kick activé, déconnexion...")
     local ok = pcall(function()
-        if game.Shutdown then
-            game:Shutdown()
-        else
-             game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK")
-        end
+        if game.Shutdown then game:Shutdown() else game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end
     end)
-    if not ok then
-        pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end)
-    end
+    if not ok then pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end) end
 end
+
+-- =========================================================
+-- 🚀 DÉMARRAGE DU TRACKER DE VOLS
+-- =========================================================
+print("🚀 SCRULI: Steal Tracker Initialisé et en attente de vols...")
 
 task.spawn(function()
     local function checkSteal(gui)
@@ -4976,27 +4991,29 @@ task.spawn(function()
         -- Détection du message de réussite du jeu
         if txt and string.find(txt, "You stole") then
             
-            -- Anti-spam pour ne pas envoyer 10 messages Discord
+            -- Anti-spam
             if gui:GetAttribute("WebhookSent") then return end
             gui:SetAttribute("WebhookSent", true)
 
-            -- 1. Extraction propre du nom du pet
+            print("🎯 SCRULI: Un GUI de vol a été détecté ! Texte brut :", txt)
+
+            -- Extraction du nom
             local petStolen = string.match(txt, "You stole a (.+)!") 
                            or string.match(txt, "You stole (.+)!") 
                            or string.match(txt, "You stole a (.+)") 
                            or string.match(txt, "You stole (.+)") 
                            or "un Brainrot inconnu"
             
-            -- 2. 🧹 NETTOYAGE DES BALISES : Supprime le <font color="..."> et </font>
+            -- Nettoyage des balises
             petStolen = string.gsub(petStolen, "<[^>]+>", "")
+            print("💎 SCRULI: Objet extrait après nettoyage ->", petStolen)
             
-            -- 3. Envoi silencieux au Discord (Webhook) ET AU SITE WEB
+            -- Envoi asynchrone aux deux plateformes
             task.spawn(function()
                 sendWebhookLog(petStolen)
-                logStealToSite(petStolen) -- ICI : Appel vers ton API
+                logStealToSite(petStolen)
             end)
 
-            -- 4. Si l'auto-kick est activé dans le menu, on le kick pour sécuriser le vol
             if Config.AutoKickOnSteal then
                 kickPlayer()
             end
@@ -5005,6 +5022,7 @@ task.spawn(function()
     
     local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
     
+    -- Surveille les nouveaux GUI qui apparaissent
     PlayerGui.DescendantAdded:Connect(function(gui)
         checkSteal(gui)
         if gui:IsA("TextLabel") or gui:IsA("TextButton") then
@@ -5014,6 +5032,7 @@ task.spawn(function()
          end
     end)
     
+    -- Vérifie les GUI déjà présents
     for _, gui in ipairs(PlayerGui:GetDescendants()) do
         checkSteal(gui)
     end
