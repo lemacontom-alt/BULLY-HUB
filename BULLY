@@ -1821,38 +1821,46 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- 🦾 AUTO TP ON SCRIPT LOAD (PRIORITÉ TP + HUB DÉCALÉ)
+-- 🦾 AUTO TP ON SCRIPT LOAD (CORRIGÉ POUR TP GORE)
 -- =========================================================
 if Config.TpSettings and Config.TpSettings.TpOnLoad then
     task.spawn(function()
-        -- 1. On force le mode ("Front" ou "Side") pour éviter le TP buggé
+        -- 1. On force les paramètres de vitesse et de mode pour le "Gore" TP
         _G.TP_Mode = Config.TpSettings.Mode or "Front"
-        Config.VisibleTP = true 
-        
-        -- 2. On laisse 0.5s au script pour allumer son radar et créer les menus en arrière-plan
-        task.wait(0.5)
-        
-        -- 3. ON CACHE LE HUB : Pour ne pas te perturber pendant le TP
-        pcall(function() if SG then SG.Enabled = false end end)
-        pcall(function() if HUD then HUD.Enabled = false end end)
-        
-        -- 4. On attend que ton radar détecte une vraie cible (Sécurité anti-bug)
+        Config.VisibleTP = true
+
+        -- 2. Attente de sécurité pour que le radar (SharedState) soit chargé
         local waitLimit = 0
-        while not SharedState.SelectedPetData and waitLimit < 50 do
+        while (not SharedState.AllAnimalsCache or #SharedState.AllAnimalsCache == 0) and waitLimit < 100 do
             task.wait(0.1)
             waitLimit = waitLimit + 1
         end
-        
-        -- 5. CIBLE TROUVÉE : On lance ton vrai Auto Snipe !
-        pcall(runAutoSnipe)
-        
-        -- 6. LA PAUSE DE 3 SECONDES (Comme tu l'as demandé)
-        -- Le TP se fait tranquillement sans aucun lag graphique
-        task.wait(3)
-        
-        -- 7. LE TP EST FINI : On affiche enfin le Hub et les menus !
-        pcall(function() if SG then SG.Enabled = true end end)
-        pcall(function() if HUD then HUD.Enabled = true end end)
+
+        -- 3. On attend que le Target Selector définisse la meilleure cible
+        task.wait(0.5)
+
+        if SharedState.SelectedPetData then
+            -- 4. ON CACHE LE HUB pour éviter les lags visuels pendant le TP Gore
+            pcall(function() if SG then SG.Enabled = false end end)
+            pcall(function() if HUD then HUD.Enabled = false end end)
+
+            -- 5. EXÉCUTION DU VRAI MOTEUR TP (runAutoSnipe)
+            -- On s'assure de passer par la fonction globale qui gère le Front/Side
+            local success, err = pcall(function()
+                runAutoSnipe()
+            end)
+
+            if not success then
+                warn("ScruliHub: Erreur lors du TP Load: " .. tostring(err))
+            end
+
+            -- 6. Pause de stabilisation avant de réafficher l'UI
+            task.wait(2.5)
+            pcall(function() if SG then SG.Enabled = true end end)
+            pcall(function() if HUD then HUD.Enabled = true end end)
+        else
+            warn("ScruliHub: Aucune cible détectée pour le TP Load.")
+        end
     end)
 end
 
@@ -2028,37 +2036,50 @@ task.spawn(function()
         if nameFound=="" then nameFound = model.Name~="" and model.Name or "Brainrot" end
         return nameFound,genFound
     end
-
 local function scanConveyor()
-        local results = {}
-        local scanCount = 0 -- Compteur pour la furtivité
-        
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            scanCount = scanCount + 1
-            -- 🛡️ ANTI-DETECTION : Fait une micro-pause tous les 1000 objets pour ne pas alerter l'anti-triche
-            if scanCount % 1000 == 0 then RunService.Heartbeat:Wait() end 
+    local results = {}
+    local scanCount = 0
 
-            if not (obj:IsA("ProximityPrompt") and obj.Enabled) then continue end
+    -- On scanne tout le Workspace pour être sûr de rien rater (GORE)
+    -- Mais on ajoute une sécurité pour être indétectable
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        scanCount = scanCount + 1
+
+        -- 🛡️ ANTI-CHEAT : Toutes les 400 itérations, on fait une micro-pause
+        -- Ça évite que ton script ne "bloque" le CPU, ce qui est grillé par l'anti-triche.
+        if scanCount % 400 == 0 then task.wait() end
+
+        if obj:IsA("ProximityPrompt") and obj.Enabled then
             local txt = obj.ActionText or ""
-            if not (txt=="Purchase" or txt:lower():find("purchase") or txt:lower():find("comprar")) then continue end
-            local part = obj.Parent
-            if not part then continue end
-            local realPart = part:IsA("Attachment") and part.Parent or part
-            if not (realPart and realPart:IsA("BasePart")) then continue end
+            -- Support multi-langues (Purchase / Comprar)
+            if txt == "Purchase" or txt:lower():find("purchase") or txt:lower():find("comprar") then
+                local part = obj.Parent
+                local realPart = part:IsA("Attachment") and part.Parent or part
 
-            local model,cur = nil,realPart
-            for _ = 1,8 do
-                if cur and cur:IsA("Model") then model=cur; break end
-                cur = cur and cur.Parent
+                if realPart and realPart:IsA("BasePart") then
+                    local model = nil
+                    local cur = realPart
+                    for i = 1, 8 do
+                        if cur and cur:IsA("Model") then model = cur; break end
+                        cur = cur and cur.Parent
+                    end
+
+                    local name, gen = getBrainrotName(model)
+                    table.insert(results, {
+                        name = name,
+                        gen = gen,
+                        prompt = obj,
+                        part = realPart,
+                        model = model,
+                        source = "ESTEIRA",
+                        uid = "buy_" .. tostring(obj)
+                    })
+                end
             end
-            
-            local name,gen = getBrainrotName(model)
-            table.insert(results,{
-                name=name, gen=gen, prompt=obj, part=realPart, model=model, source="ESTEIRA", uid="esteira_"..tostring(obj),
-            })
         end
-        return results
     end
+    return results
+end
 
     SharedState.ConveyorAnimals = {}
     local function refreshConveyor()
@@ -4901,143 +4922,48 @@ task.spawn(function()
 end)
 
 
+
+
 -- =========================================================
--- 🌐 SCRULI HUB - DISCORD WEBHOOK & LIVE SITE TRACKER
+-- AUTO KICK ON STEAL (BULLYHUB SECURE ENGINE)
 -- =========================================================
-local WebhookURL = "https://discord.com/api/webhooks/1495890268845641840/kOdm-FjV0t8sjY-NN3XOfkX-coImLlE-o1aiuTCQbQdau3KpZqZZZDwICE1N1aWp4yti"
-
--- Configuration locale si elle n'existe pas dans ton menu
-local Config = Config or { AutoKickOnSteal = false } 
-
--- 1️⃣ FONCTION : Envoi vers Discord
-local function sendWebhookLog(brainrotName)
-    local HttpService = game:GetService("HttpService")
-    local playerName = game.Players.LocalPlayer.Name
-
-    local data = {
-        ["content"] = "",
-        ["embeds"] = {{
-            ["title"] = "🚨A BRAINROT GOT STOLEN!",
-            ["description"] = "THE PLAYER **" .. playerName .. "** JUST STOLE!\n\n**BRAINROT STOLEN :** `" .. tostring(brainrotName) .. "`",
-            ["type"] = "rich",
-            ["color"] = tonumber(0xff8800),
-            ["footer"] = { ["text"] = "Scruli Hub  - Steal tracker" }
-        }}
-    }
-
-    local jsonData = HttpService:JSONEncode(data)
-    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
-    
-    if requestFunc then
-        pcall(function()
-            requestFunc({
-                Url = WebhookURL,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = jsonData
-            })
-        end)
-        print("✅ SCRULI: Webhook Discord envoyé pour l'item -> " .. tostring(brainrotName))
-    end
-end
-
--- 2️⃣ FONCTION : Envoi vers ton Dashboard (API Render)
-local function logStealToSite(brainrotName)
-    local key = getgenv().scruli_key
-    
-    if not key or key == "" then 
-        warn("⚠️ SCRULI: Pas de clé de licence (getgenv().scruli_key) ! Le vol n'ira pas sur le site web.")
-        return 
-    end
-    
-    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
-    if requestFunc then
-        local success, err = pcall(function()
-            local response = requestFunc({
-                Url = "https://scruli-api-pro.onrender.com/v4/log-steal",
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = game:GetService("HttpService"):JSONEncode({ key = key, item = brainrotName })
-            })
-            print("🌐 SCRULI: Vol envoyé au Dashboard ! (Status: " .. tostring(response and response.StatusCode or "Inconnu") .. ")")
-        end)
-        
-        if not success then
-            warn("❌ SCRULI: Erreur de connexion à l'API ->", err)
-        end
-    else
-        warn("❌ SCRULI: Ton exécuteur ne supporte pas les requêtes HTTP.")
-    end
-end
-
--- 3️⃣ FONCTION : Sécurité (Auto Kick)
 local function kickPlayer()
-    print("👢 SCRULI: Auto-Kick activé, déconnexion...")
     local ok = pcall(function()
-        if game.Shutdown then game:Shutdown() else game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end
+        if game.Shutdown then
+            game:Shutdown()
+        else
+            game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK")
+        end
     end)
-    if not ok then pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end) end
+    if not ok then
+        pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end)
+    end
 end
-
--- =========================================================
--- 🚀 DÉMARRAGE DU TRACKER DE VOLS
--- =========================================================
-print("🚀 SCRULI: Steal Tracker Initialisé et en attente de vols...")
 
 task.spawn(function()
     local function checkSteal(gui)
+        if not Config.AutoKickOnSteal then return end
         local txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.Text
-        
-        -- Détection du message de réussite du jeu
         if txt and string.find(txt, "You stole") then
-            
-            -- Anti-spam
-            if gui:GetAttribute("WebhookSent") then return end
-            gui:SetAttribute("WebhookSent", true)
-
-            print("🎯 SCRULI: Un GUI de vol a été détecté ! Texte brut :", txt)
-
-            -- Extraction du nom
-            local petStolen = string.match(txt, "You stole a (.+)!") 
-                           or string.match(txt, "You stole (.+)!") 
-                           or string.match(txt, "You stole a (.+)") 
-                           or string.match(txt, "You stole (.+)") 
-                           or "un Brainrot inconnu"
-            
-            -- Nettoyage des balises
-            petStolen = string.gsub(petStolen, "<[^>]+>", "")
-            print("💎 SCRULI: Objet extrait après nettoyage ->", petStolen)
-            
-            -- Envoi asynchrone aux deux plateformes
-            task.spawn(function()
-                sendWebhookLog(petStolen)
-                logStealToSite(petStolen)
-            end)
-
-            if Config.AutoKickOnSteal then
-                kickPlayer()
-            end
+            kickPlayer()
         end
     end
     
     local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
     
-    -- Surveille les nouveaux GUI qui apparaissent
     PlayerGui.DescendantAdded:Connect(function(gui)
         checkSteal(gui)
         if gui:IsA("TextLabel") or gui:IsA("TextButton") then
             gui:GetPropertyChangedSignal("Text"):Connect(function()
                 checkSteal(gui)
             end)
-         end
+        end
     end)
     
-    -- Vérifie les GUI déjà présents
     for _, gui in ipairs(PlayerGui:GetDescendants()) do
         checkSteal(gui)
     end
 end)
-
 -- =========================================================
 -- [KEYBINDS GLOBAUX (SAFE EXECUTION)]
 -- =========================================================
