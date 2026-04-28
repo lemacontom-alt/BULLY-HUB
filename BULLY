@@ -211,100 +211,88 @@ local PRIORITY_LIST = {
 
 
 
-local toggleDesyncFunc
-do
-    local hooked = false
-    local currentHook = nil
-    local CachetteSecurisee = nil -- Mémoire pour le Mobile
-
-    toggleDesyncFunc = function(state)
-        local raknet = getgenv and getgenv().raknet
-        if not raknet then 
-            warn("ScruliHub: RakNet non supporté sur cet exécuteur.")
-            return false
+     local toggleDesyncFunc
+     do
+         local hooked = false
+         local currentHook = nil
+         local savedCFrameMobile = nil
+         local serverIndicator = nil
+    
+         -- Petite fonction pour le cube noir (Indicateur CatHUB)
+         local function createServerIndicator(position)
+            pcall(function() if workspace:FindFirstChild("Scruli_ServerPos") then workspace.Scruli_ServerPos:Destroy()
+      end end)
+           local folder = Instance.new("Folder", workspace); folder.Name = "Scruli_ServerPos"
+          local box = Instance.new("Part", folder)
+            box.Name = "ServerBox"; box.Size = Vector3.new(4, 5, 4); box.CFrame = CFrame.new(position)
+            box.Anchored = true; box.CanCollide = false; box.Transparency = 0.6; box.Color = Color3.new(0,0,0);
+      box.Material = Enum.Material.SmoothPlastic
+            local bb = Instance.new("BillboardGui", box); bb.Size = UDim2.new(0, 140, 0, 30); bb.StudsOffset =
+      Vector3.new(0, 3.5, 0); bb.AlwaysOnTop = true
+            local txt = Instance.new("TextLabel", bb); txt.Size = UDim2.new(1, 0, 1, 0); txt.BackgroundTransparency =
+      1; txt.Text = "SERVER POSITION"; txt.TextColor3 = Color3.new(1,1,1); txt.Font = Enum.Font.GothamBold; txt.TextSize
+      = 14
+            serverIndicator = folder
         end
-
-        if state == nil then state = not hooked end
-        if state == hooked then return state end
-        
-        local UserInputService = game:GetService("UserInputService")
-        local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
-        local LocalPlayer = game:GetService("Players").LocalPlayer
-        
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChild("Humanoid")
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        
-        if state then
-            if isMobile then
-                -- 🟢 POUR MOBILE : GHOST ANCHOR (FLUIDITÉ 100%)
-                if hrp and hum then
-                    CachetteSecurisee = hrp.CFrame
-                    hrp.Anchored = true
-                    task.wait(0.15)
-                    
-                    pcall(function()
-                        if type(raknet.desync) == "function" then
-                            raknet.desync(true)
-                        else
-                            raknet.desync = true
-                        end
-                    end)
-                    
-                    hrp.Anchored = false
-                    hum.WalkSpeed = 20 -- Speed Boost !
-                end
-            else
-                -- 🟢 POUR PC : FONCTION VXNTA PURE
-                if not currentHook then
-                    pcall(function()
-                        currentHook = raknet.add_send_hook(function(packet)
-                            if packet.PacketId == 0x1B then
-                                local data = packet.AsBuffer
-                                buffer.writeu32(data, 1, 0xFFFFFFFF)
-                                packet:SetData(data)
-                            end
-                        end)
-                    end)
-                end
-            end
-        else
-            if isMobile then
-                -- 🔴 POUR MOBILE : RETOUR SÉCURISÉ (ZERO LAGBACK)
-                if hrp and hum then
-                    hum.WalkSpeed = 16
-                    hrp.Anchored = true
-                    
-                    if CachetteSecurisee then
-                        hrp.CFrame = CachetteSecurisee
+         toggleDesyncFunc = function(state)
+            local raknet = getgenv and getgenv().raknet
+            if state == nil then state = not hooked end
+            if state == hooked then return state end
+   
+            local UserInputService = game:GetService("UserInputService")
+            local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+           local LocalPlayer = game:GetService("Players").LocalPlayer
+            local char = LocalPlayer.Character
+           local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChild("Humanoid")
+   
+          if state then
+                if isMobile then
+                    -- 📱 MOBILE : LOGIQUE CATHUB (HITBOX TP)
+                    if hrp then
+                        savedCFrameMobile = hrp.CFrame
+                        -- On envoie la hitbox dans la zone CatHUB
+                        hrp.CFrame = CFrame.new(-352.761902, -56.8626175, 7.06043243, 0, 0, -1, 0, 1, 0, 1, 0, 0)
+                        if raknet and raknet.desync then pcall(function() raknet.desync(true) end) end
+                        createServerIndicator(savedCFrameMobile.Position)
+                      if hum then hum.WalkSpeed = 20 end
                     end
-                    task.wait(0.1)
-                    
-                    pcall(function()
-                        if type(raknet.desync) == "function" then
-                            raknet.desync(false)
-                        else
-                            raknet.desync = false
-                        end
-                    end)
-                    
-                    task.wait(0.1)
-                    hrp.Anchored = false
+                else
+                   -- 💻 PC : FONCTION VXNTA PURE (TON CODE D'ORIGINE)
+                    if raknet and not currentHook then
+                        pcall(function()
+                           currentHook = raknet.add_send_hook(function(packet)
+                                if packet.PacketId == 0x1B then
+                                    local data = packet.AsBuffer
+                                    buffer.writeu32(data, 1, 0xFFFFFFFF)
+                                    packet:SetData(data)
+                                end
+                            end)
+                        end)
+                    end
                 end
             else
-                -- 🔴 POUR PC : DÉSACTIVATION VXNTA
-                if currentHook then
-                    pcall(function() raknet.remove_send_hook(currentHook) end)
-                    currentHook = nil
+              if isMobile then
+                   -- 📱 MOBILE : RETOUR CATHUB
+                    if raknet and raknet.desync then pcall(function() raknet.desync(false) end) end
+                    if hrp and savedCFrameMobile then hrp.CFrame = savedCFrameMobile end
+                    if serverIndicator then serverIndicator:Destroy(); serverIndicator = nil end
+                    if hum then hum.WalkSpeed = 16 end
+                else
+                   -- 💻 PC : DÉSACTIVATION VXNTA
+                   if raknet and currentHook then
+                        pcall(function() raknet.remove_send_hook(currentHook) end)
+                        currentHook = nil
+                    end
                 end
-            end
+           end
+   
+            hooked = state
+            return hooked
         end
-        
-        hooked = state
-        return hooked
+        _G.toggleDesyncFunc = toggleDesyncFunc
     end
-    _G.toggleDesyncFunc = toggleDesyncFunc
-end
+
 -- =========================================================
 -- 🦾 NOTIFICATIONS LETHAL HUB
 -- =========================================================
@@ -1552,7 +1540,6 @@ runAutoSnipe = function()
     State.isTpMoving = false
 end
 
-
 -- =========================================================
 -- 🦾 DATA SCANNING & TARGETING (LETHAL HUB LOGIC PURE)
 -- =========================================================
@@ -1881,24 +1868,22 @@ local function applyVisuals(target)
         return
     end
 
-    local function getClosestSentry()
-        local _, hrp = getChar()
-        local closest, shortestDist = nil, math.huge
-        for _, inst in ipairs(Workspace:GetDescendants()) do
-            if inst.Name:match("^Sentry_") then
-                if hasExclamation(inst) then
-                    local root = inst:IsA("BasePart") and inst or inst:FindFirstChildWhichIsA("BasePart", true)
-                    if root then
-                        local dist = (hrp.Position - root.Position).Magnitude
-                        if dist < shortestDist then
-                            shortestDist = dist
-                            closest = inst
-                        end
-                    end
+      
+     local function getClosestSentry()
+         local _, hrp = getChar()
+         local closest, shortestDist = nil, math.huge
+         -- On cible uniquement Plots et Workspace (enfants directs)
+         local searchAreas = {workspace, workspace:FindFirstChild("Plots")}
+    
+         for _, area in ipairs(searchAreas) do
+             if not area then continue end
+           for _, inst in ipairs(area:GetChildren()) do
+                if inst.Name:match("^Sentry_") then
+                    -- ... (garde le reste de ta logique de distance)
                 end
             end
         end
-         return closest
+        return closest
     end
 
     while true do
@@ -2024,50 +2009,37 @@ task.spawn(function()
         if nameFound=="" then nameFound = model.Name~="" and model.Name or "Brainrot" end
         return nameFound,genFound
     end
+
 local function scanConveyor()
-    local results = {}
-    local scanCount = 0
+        local results = {}
+        local scanCount = 0 -- Compteur pour la furtivité
+        
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            scanCount = scanCount + 1
+            -- 🛡️ ANTI-DETECTION : Fait une micro-pause tous les 1000 objets pour ne pas alerter l'anti-triche
+            if scanCount % 1000 == 0 then RunService.Heartbeat:Wait() end 
 
-    -- On scanne tout le Workspace pour être sûr de rien rater (GORE)
-    -- Mais on ajoute une sécurité pour être indétectable
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        scanCount = scanCount + 1
-
-        -- 🛡️ ANTI-CHEAT : Toutes les 400 itérations, on fait une micro-pause
-        -- Ça évite que ton script ne "bloque" le CPU, ce qui est grillé par l'anti-triche.
-        if scanCount % 400 == 0 then task.wait() end
-
-        if obj:IsA("ProximityPrompt") and obj.Enabled then
+            if not (obj:IsA("ProximityPrompt") and obj.Enabled) then continue end
             local txt = obj.ActionText or ""
-            -- Support multi-langues (Purchase / Comprar)
-            if txt == "Purchase" or txt:lower():find("purchase") or txt:lower():find("comprar") then
-                local part = obj.Parent
-                local realPart = part:IsA("Attachment") and part.Parent or part
+            if not (txt=="Purchase" or txt:lower():find("purchase") or txt:lower():find("comprar")) then continue end
+            local part = obj.Parent
+            if not part then continue end
+            local realPart = part:IsA("Attachment") and part.Parent or part
+            if not (realPart and realPart:IsA("BasePart")) then continue end
 
-                if realPart and realPart:IsA("BasePart") then
-                    local model = nil
-                    local cur = realPart
-                    for i = 1, 8 do
-                        if cur and cur:IsA("Model") then model = cur; break end
-                        cur = cur and cur.Parent
-                    end
-
-                    local name, gen = getBrainrotName(model)
-                    table.insert(results, {
-                        name = name,
-                        gen = gen,
-                        prompt = obj,
-                        part = realPart,
-                        model = model,
-                        source = "ESTEIRA",
-                        uid = "buy_" .. tostring(obj)
-                    })
-                end
+            local model,cur = nil,realPart
+            for _ = 1,8 do
+                if cur and cur:IsA("Model") then model=cur; break end
+                cur = cur and cur.Parent
             end
+            
+            local name,gen = getBrainrotName(model)
+            table.insert(results,{
+                name=name, gen=gen, prompt=obj, part=realPart, model=model, source="ESTEIRA", uid="esteira_"..tostring(obj),
+            })
         end
+        return results
     end
-    return results
-end
 
     SharedState.ConveyorAnimals = {}
     local function refreshConveyor()
@@ -4910,48 +4882,143 @@ task.spawn(function()
 end)
 
 
-
-
 -- =========================================================
--- AUTO KICK ON STEAL (BULLYHUB SECURE ENGINE)
+-- 🌐 SCRULI HUB - DISCORD WEBHOOK & LIVE SITE TRACKER
 -- =========================================================
-local function kickPlayer()
-    local ok = pcall(function()
-        if game.Shutdown then
-            game:Shutdown()
-        else
-            game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK")
-        end
-    end)
-    if not ok then
-        pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end)
+local WebhookURL = "https://discord.com/api/webhooks/1495890268845641840/kOdm-FjV0t8sjY-NN3XOfkX-coImLlE-o1aiuTCQbQdau3KpZqZZZDwICE1N1aWp4yti"
+
+-- Configuration locale si elle n'existe pas dans ton menu
+local Config = Config or { AutoKickOnSteal = false } 
+
+-- 1️⃣ FONCTION : Envoi vers Discord
+local function sendWebhookLog(brainrotName)
+    local HttpService = game:GetService("HttpService")
+    local playerName = game.Players.LocalPlayer.Name
+
+    local data = {
+        ["content"] = "",
+        ["embeds"] = {{
+            ["title"] = "🚨A BRAINROT GOT STOLEN!",
+            ["description"] = "THE PLAYER **" .. playerName .. "** JUST STOLE!\n\n**BRAINROT STOLEN :** `" .. tostring(brainrotName) .. "`",
+            ["type"] = "rich",
+            ["color"] = tonumber(0xff8800),
+            ["footer"] = { ["text"] = "Scruli Hub  - Steal tracker" }
+        }}
+    }
+
+    local jsonData = HttpService:JSONEncode(data)
+    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
+    
+    if requestFunc then
+        pcall(function()
+            requestFunc({
+                Url = WebhookURL,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = jsonData
+            })
+        end)
+        print("f" .. tostring(brainrotName))
     end
 end
 
+-- 2️⃣ FONCTION : Envoi vers ton Dashboard (API Render)
+local function logStealToSite(brainrotName)
+    local key = getgenv().scruli_key
+    
+    if not key or key == "" then 
+        warn("⚠️ SCRULI: Pas de clé de licence (getgenv().scruli_key) ! Le vol n'ira pas sur le site web.")
+        return 
+    end
+    
+    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
+    if requestFunc then
+        local success, err = pcall(function()
+            local response = requestFunc({
+                Url = "https://scruli-api-pro.onrender.com/v4/log-steal",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = game:GetService("HttpService"):JSONEncode({ key = key, item = brainrotName })
+            })
+            print("! (Status: " .. tostring(response and response.StatusCode or "Inconnu") .. ")")
+        end)
+        
+        if not success then
+            warn(" ->", err)
+        end
+    else
+        warn("")
+    end
+end
+
+-- 3️⃣ FONCTION : Sécurité (Auto Kick)
+local function kickPlayer()
+    print("")
+    local ok = pcall(function()
+        if game.Shutdown then game:Shutdown() else game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end
+    end)
+    if not ok then pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end) end
+end
+
+-- =========================================================
+-- 🚀 DÉMARRAGE DU TRACKER DE VOLS
+-- =========================================================
+print("")
+
 task.spawn(function()
     local function checkSteal(gui)
-        if not Config.AutoKickOnSteal then return end
         local txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.Text
+        
+        -- Détection du message de réussite du jeu
         if txt and string.find(txt, "You stole") then
-            kickPlayer()
+            
+            -- Anti-spam
+            if gui:GetAttribute("WebhookSent") then return end
+            gui:SetAttribute("WebhookSent", true)
+
+            print(" Texte brut :", txt)
+
+            -- Extraction du nom
+            local petStolen = string.match(txt, "You stole a (.+)!") 
+                           or string.match(txt, "You stole (.+)!") 
+                           or string.match(txt, "You stole a (.+)") 
+                           or string.match(txt, "You stole (.+)") 
+                           or "un Brainrot inconnu"
+            
+            -- Nettoyage des balises
+            petStolen = string.gsub(petStolen, "<[^>]+>", "")
+            print("", petStolen)
+            
+            -- Envoi asynchrone aux deux plateformes
+            task.spawn(function()
+                sendWebhookLog(petStolen)
+                logStealToSite(petStolen)
+            end)
+
+            if Config.AutoKickOnSteal then
+                kickPlayer()
+            end
         end
     end
     
     local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
     
+    -- Surveille les nouveaux GUI qui apparaissent
     PlayerGui.DescendantAdded:Connect(function(gui)
         checkSteal(gui)
         if gui:IsA("TextLabel") or gui:IsA("TextButton") then
             gui:GetPropertyChangedSignal("Text"):Connect(function()
                 checkSteal(gui)
             end)
-        end
+         end
     end)
     
+    -- Vérifie les GUI déjà présents
     for _, gui in ipairs(PlayerGui:GetDescendants()) do
         checkSteal(gui)
     end
 end)
+
 -- =========================================================
 -- [KEYBINDS GLOBAUX (SAFE EXECUTION)]
 -- =========================================================
@@ -5815,20 +5882,30 @@ if Config.AutoSellOnSteal ~= nil then autoSellEnabled = Config.AutoSellOnSteal e
     btnClick.TextSize = 11
     Instance.new("UICorner", btnClick).CornerRadius = UDim.new(0, 6)
 
-    local function getPetModelFromWorkspace(petName)
-        local foundModel = nil
-        pcall(function()
-            for _, obj in ipairs(Workspace:GetDescendants()) do
-                if obj:IsA("Model") and obj.Name == petName then
-                    if obj:FindFirstChildWhichIsA("BasePart") then
-                        foundModel = obj
-                        break
-                    end
+local function getPetModelFromWorkspace(petName)
+    -- On désactive la recherche 3D lourde sur mobile pour éviter les crashs
+    local UserInputService = game:GetService("UserInputService")
+    if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+        return nil 
+    end
+
+    local foundModel = nil
+    pcall(function()
+        -- Au lieu de chercher dans TOUTE la map, on cible uniquement là où les pets existent
+        local plots = Workspace:FindFirstChild("Plots")
+        if not plots then return end
+        
+        for _, obj in ipairs(plots:GetDescendants()) do
+            if obj:IsA("Model") and obj.Name == petName then
+                if obj:FindFirstChildWhichIsA("BasePart") then
+                    foundModel = obj
+                    break
                 end
             end
-        end)
-        return foundModel
-    end
+        end
+    end)
+    return foundModel
+end
 
     local function updateDisplay()
         viewport:ClearAllChildren()
