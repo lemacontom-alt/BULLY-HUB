@@ -154,7 +154,6 @@ for k, v in pairs(DefaultConfig) do
     else Config[k] = v end
 end
 
-
 local function LoadConfig()
     if readfile and isfile and isfile(saveFile) then
         local ok, data = pcall(function() return HttpService:JSONDecode(readfile(saveFile)) end)
@@ -162,33 +161,39 @@ local function LoadConfig()
             for k, v in pairs(data) do
                 if type(v) == "table" then
                     if type(Config[k]) ~= "table" then Config[k] = {} end
-                    for subK, subV in pairs(v) do 
+                    for subK, subV in pairs(v) do
                         if subV ~= nil then Config[k][subK] = subV end
                     end
-                elseif v ~= nil then 
-                    Config[k] = v 
+                elseif v ~= nil then
+                    Config[k] = v
                 end
             end
         end
     end
-    
+
     -- Valeurs par défaut vitales si manquantes
     if Config.VisibleSP == nil then Config.VisibleSP = true end
     if Config.VisibleAP == nil then Config.VisibleAP = true end
     if not Config.TpSettings.Offset then Config.TpSettings.Offset = 5 end
     if not Config.TpSettings.JumpHeight then Config.TpSettings.JumpHeight = 50 end
     if not Config.TpSettings.Speed then Config.TpSettings.Speed = 250 end
-    
+
     Config.MenuKey = "J"
     Config.VisibleAP = true
     if not Config.DesyncKey then Config.DesyncKey = "U" end
 end
+
+-- 1. CHARGEMENT DE LA CONFIG
 LoadConfig()
+
+-- 2. 🔥 INITIALISATION PRIORITAIRE DU MODE TP (Pour que runAutoSnipe fonctionne direct)
+if not Config.TpSettings.Mode then Config.TpSettings.Mode = "Front" end
+_G.TP_Mode = Config.TpSettings.Mode
 
 local function SaveConfig()
     if writefile then
         pcall(function() writefile(saveFile, HttpService:JSONEncode(Config)) end)
-end
+    end
 end
     
 
@@ -1345,16 +1350,14 @@ runAutoSnipe = function()
         local carpetName = Config.TpSettings.Tool
         local carpet = game:GetService("Players").LocalPlayer.Backpack:FindFirstChild(carpetName) or char:FindFirstChild(carpetName)
         
-if _G.TP_Mode == "Front" then
+        if _G.TP_Mode == "Front" then
             -- ==========================================
-            -- 🔴 MODE FRONT : DYNAMIQUE (Basé sur le Ping)
+            -- 🔴 MODE FRONT : JUMP -> COORDS -> JUMP -> BASE -> CLONE
             -- ==========================================
             if carpet then hum:EquipTool(carpet) end
-            hum:ChangeState(Enum.HumanoidStateType.Jumping)
             task.wait(0.01)
 
-
--- 📡 Utilisation des réglages du panel TP Config
+            -- 📡 Utilisation des réglages du panel TP Config
             local waitTime = (1 / (Config.TpSettings.MoveToBaseSpeed or 250)) * 5
             local tpVelocity = Config.TpSettings.JumpPower or 180
             
@@ -1362,22 +1365,30 @@ if _G.TP_Mode == "Front" then
             local plotIdx = getClosestBaseIdx(exactPos)
             local targetBasePos = isSecondFloor and BASES_HIGH[plotIdx] or BASES_LOW[plotIdx]
             
-            local jumpStart = tick()
-            while hrp.Position.Y < math.max(targetBasePos.Y, 50) and (tick() - jumpStart) < 2 do
-                hrp.AssemblyLinearVelocity = Vector3.new(0, Config.TpSettings.JumpPower, 0)
-                game:GetService("RunService").Heartbeat:Wait()
-            end
-
+            -- 0. JUMP POWER POUR ALLER AUX COORDONNÉES (ACCÉLÉRÉ ⚡)
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+            hrp.AssemblyLinearVelocity = Vector3.new(0, tpVelocity, 0)
+            task.wait(0.03) -- Délai ultra court pour aller plus vite
+            
+            -- TP AUX COORDONNÉES
             hrp.Anchored = true
-            for i = 1, 10 do
-                if (hrp.Position - targetBasePos).Magnitude > 1 then
-                    hrp.CFrame = CFrame.new(targetBasePos)
-                    task.wait(waitTime) 
-                end
-            end
+            hrp.CFrame = CFrame.new(-411.30, -6.47, 67.33)
+            task.wait(0.03) -- Délai ultra court
             hrp.Anchored = false
-            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 
+            -- 1. JUMP POWER POUR ALLER À LA BASE
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+            hrp.AssemblyLinearVelocity = Vector3.new(0, tpVelocity, 0)
+            task.wait(0.15)
+
+            -- 2. TP DEVANT LA BASE
+            hrp.Anchored = true
+            hrp.CFrame = CFrame.new(targetBasePos)
+            task.wait(waitTime)
+            hrp.Anchored = false
+            hrp.AssemblyLinearVelocity = Vector3.zero
+
+            -- 3. CLONE EST TOUT (Ton code intact)
             if not isSecondFloor then
                 local bestSpot, minDst = CLONE_POSITIONS_FLOOR[1], math.huge
                 for _, v in ipairs(CLONE_POSITIONS_FLOOR) do
@@ -1522,7 +1533,7 @@ if _G.TP_Mode == "Front" then
         end
 
         -- ================================================================
-        -- 🧠 ALIGNEMENT SUR LE BRAINROT
+        -- 🧠 ALIGNEMENT SUR LE BRAINROT (4. TP SUR LE BRAINROT)
         -- ================================================================
         task.wait(0.15)
         if carpet then hum:EquipTool(carpet) end
@@ -1539,7 +1550,7 @@ if _G.TP_Mode == "Front" then
             plat.Transparency = 0.3
             
             if shouldAnchor then hrp.Anchored = true end
-         for i = 1, 10 do 
+            for i = 1, 10 do 
                 if not game:GetService("Players").LocalPlayer:GetAttribute("Stealing") then 
                     hrp.AssemblyLinearVelocity = Vector3.zero
                     hrp.CFrame = CFrame.new(airPos)
@@ -1547,14 +1558,13 @@ if _G.TP_Mode == "Front" then
                 end 
             end
 
-
             if shouldAnchor then hrp.Anchored = false end
             hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             
             task.delay(10, function() plat:Destroy() end)
         else
             if shouldAnchor then hrp.Anchored = true end
-for i = 1, 10 do 
+            for i = 1, 10 do 
                 if game:GetService("Players").LocalPlayer:GetAttribute("Stealing") then break end
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 if (hrp.Position - targetPart.Position).Magnitude > 3 then
@@ -1820,29 +1830,7 @@ task.spawn(function()
     end
 end)
 
--- =========================================================
--- 🦾 AUTO TP ON SCRIPT LOAD (LE VRAI TP, DIRECT ET SIMPLE)
--- =========================================================
-if Config.TpSettings and Config.TpSettings.TpOnLoad then
-    task.spawn(function()
-        -- 1. On attend que ton personnage soit bien chargé dans le jeu
-        local player = game:GetService("Players").LocalPlayer
-        local char = player.Character or player.CharacterAdded:Wait()
-        char:WaitForChild("HumanoidRootPart", 10)
-        char:WaitForChild("Humanoid", 10)
 
-        -- 2. On attend que le radar ait trouvé la meilleure cible
-        while not SharedState.SelectedPetData do
-            task.wait(0.2)
-        end
-
-        -- 3. Petite pause de 1 seconde pour être sûr que la map et ton perso sont stables
-        task.wait(1)
-
-        -- 4. ON LANCE EXACTEMENT LE MÊME TP QUE LA TOUCHE MANUELLE
-        pcall(runAutoSnipe)
-    end)
-end
 -- =========================================================
 -- 🦾 AUTO TURRET ENGINE (PURE LETHAL HUB LOGIC)
 -- =========================================================
@@ -2800,6 +2788,44 @@ task.spawn(function()
 end)
 
 -- =========================================================
+-- 🦾 BOOT SEQUENCE (TP FIRST, UI LATER)
+-- =========================================================
+local function StartFullHub()
+    warn("ScruliHub: 📂 Chargement de l'interface et des fonctions...")
+    -- [METS TOUT TON CODE UI (SG, HUD, etc.) À PARTIR D'ICI DANS CETTE FONCTION]
+end
+
+if Config.TpSettings and Config.TpSettings.TpOnLoad then
+    task.spawn(function()
+        warn("ScruliHub: 🚀 Séquence Auto TP prioritaire...")
+
+        if not game:IsLoaded() then game.Loaded:Wait() end
+        local player = game:GetService("Players").LocalPlayer
+        local char = player.Character or player.CharacterAdded:Wait()
+        local hrp = char:WaitForChild("HumanoidRootPart", 10)
+
+        task.wait(3.5) -- Anti-bug spawn
+
+        -- Attente radar (max 8s)
+        local count = 0
+        while not SharedState.SelectedPetData and count < 40 do
+            task.wait(0.2)
+            count = count + 1
+        end
+
+        if SharedState.SelectedPetData then
+            warn("ScruliHub: 🎯 Cible détectée. Lancement du vrai TP...")
+            pcall(runAutoSnipe) -- EXECUTE LE VRAI TP MAINTENANT
+            task.wait(3) -- Délai pour arriver
+        end
+
+        StartFullHub() -- Enfin on affiche le Hub
+    end)
+else
+    StartFullHub() -- On lance direct si l'auto TP est OFF
+end
+
+-- =========================================================
 -- 🎨 UI ENGINE (MAKING WINDOWS)
 -- =========================================================
 local SG = Instance.new("ScreenGui")
@@ -3505,7 +3531,7 @@ sideTog = CreateiOSToggle(pAuto, "Mode: SIDE", _G.TP_Mode == "Side", function(va
 end)
 
 -- =========================================================
--- 🛠️ TP CONFIG : MENU SANS BUG GRIS + SAUVEGARDE RÉPARÉE
+-- 🛠️ TP CONFIG : MENU ENTIÈREMENT RECRÉÉ (SANS BUG NI LAG)
 -- =========================================================
 local btnTPSettings = Instance.new("TextButton", pAuto)
 btnTPSettings.Size = UDim2.new(1, -16, 0, 28)
@@ -3524,10 +3550,10 @@ TPS.Name = "Scruli_TPSettings_Final"
 TPS.Parent = SG 
 TPS.ZIndex = 200
 
--- 1. LA FONCTION OFFICIELLE CRÉE LE MENU (et le met en Visible = true)
+-- On utilise ta fonction de panel global
 local tpsCont = ApplyPanelStyle(TPS, 250, 280, 0.5, 0.4, "SCRULI HUB V3", "Teleport Tuning", "TPS")
 
--- 2. LE FIX : On applique la sauvegarde JUSTE APRÈS, pour refermer le menu s'il le faut !
+-- Fix de la visibilité avec la sauvegarde
 if Config.TpMenuVisible == nil then Config.TpMenuVisible = false end
 TPS.Visible = Config.TpMenuVisible 
 
@@ -3535,17 +3561,22 @@ local tpsLay = Instance.new("UIListLayout", tpsCont)
 tpsLay.Padding = UDim.new(0, 10)
 tpsLay.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
+-- Fonction optimisée pour éviter les crashs et les fuites de mémoire
 local function CreateBrightBar(parent, text, min, max, currentKey, isDecimal)
     local sFrame = Instance.new("Frame", parent)
     sFrame.Size = UDim2.new(1, -10, 0, 42)
     sFrame.BackgroundTransparency = 1
     
-    local val = Config.TpSettings[currentKey] or min
+    -- Sécurité : si la valeur n'existe pas encore dans Config, on met le min
+    if Config.TpSettings[currentKey] == nil then
+        Config.TpSettings[currentKey] = min
+    end
+    
+    local val = math.clamp(Config.TpSettings[currentKey], min, max)
     
     local sTitle = Instance.new("TextLabel", sFrame)
     sTitle.Size = UDim2.new(1, 0, 0, 15)
-    sTitle.Text = text .. ": " .. (isDecimal and string.format("%.2f", val) or tostring(val))
-    -- 💡 TEXTE BLANC PUR POUR ÉCLAIRER
+    sTitle.Text = text .. ": " .. (isDecimal and string.format("%.2f", val) or tostring(math.floor(val)))
     sTitle.TextColor3 = Color3.fromRGB(255, 255, 255) 
     sTitle.Font = Enum.Font.GothamBold
     sTitle.TextSize = 11
@@ -3555,16 +3586,15 @@ local function CreateBrightBar(parent, text, min, max, currentKey, isDecimal)
     local sBg = Instance.new("Frame", sFrame)
     sBg.Size = UDim2.new(1, 0, 0, 6)
     sBg.Position = UDim2.new(0, 0, 0, 24)
-    -- 💡 BARRE GRIS CLAIR POUR LE CONTRASTE
     sBg.BackgroundColor3 = Color3.fromRGB(200, 200, 200) 
     Instance.new("UICorner", sBg).CornerRadius = UDim.new(1, 0)
-    
+   
+    local pct = (val - min) / (max - min)
     local sFill = Instance.new("Frame", sBg)
-    sFill.Size = UDim2.new((val - min) / (max - min), 0, 1, 0)
+    sFill.Size = UDim2.new(pct, 0, 1, 0)
     sFill.BackgroundColor3 = Theme.AmberMain
     Instance.new("UICorner", sFill).CornerRadius = UDim.new(1, 0)
     
-    -- POINT BLANC POUR MIEUX VISER SUR MOBILE
     local glow = Instance.new("Frame", sFill)
     glow.Size = UDim2.new(0, 8, 1, 6)
     glow.Position = UDim2.new(1, -4, 0, -3)
@@ -3577,17 +3607,50 @@ local function CreateBrightBar(parent, text, min, max, currentKey, isDecimal)
     sBtn.Text = ""
 
     local dragging = false
-    sBtn.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = true end end)
-    UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false; SaveConfig() end end)
+    local moveConnection = nil
+
+    local function updateSlider()
+        local mousePos = UserInputService:GetMouseLocation()
+        -- Clamp assure que la barre ne dépasse jamais 0% ou 100%
+        local percent = math.clamp((mousePos.X - sBg.AbsolutePosition.X) / sBg.AbsoluteSize.X, 0, 1)
+        
+        sFill.Size = UDim2.new(percent, 0, 1, 0)
+        
+        local newVal = min + ((max - min) * percent)
+        if not isDecimal then 
+            newVal = math.floor(newVal) 
+        end
+        
+        Config.TpSettings[currentKey] = newVal
+        sTitle.Text = text .. ": " .. (isDecimal and string.format("%.2f", newVal) or tostring(newVal))
+    end
+
+    sBtn.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            updateSlider() -- Met à jour au clic initial
+            
+            -- On ne crée l'Event de mouvement QUE pendant qu'on drag
+            if moveConnection then moveConnection:Disconnect() end
+            moveConnection = UserInputService.InputChanged:Connect(function(moveInput)
+                if moveInput.UserInputType == Enum.UserInputType.MouseMovement or moveInput.UserInputType == Enum.UserInputType.Touch then
+                    updateSlider()
+                end
+            end)
+        end
+    end)
     
-    UserInputService.InputChanged:Connect(function(i)
-        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local percent = math.clamp((UserInputService:GetMouseLocation().X - sBg.AbsolutePosition.X) / sBg.AbsoluteSize.X, 0, 1)
-            sFill.Size = UDim2.new(percent, 0, 1, 0)
-            local newVal = min + (max - min) * percent
-            if not isDecimal then newVal = math.floor(newVal) end
-            Config.TpSettings[currentKey] = newVal
-            sTitle.Text = text .. ": " .. (isDecimal and string.format("%.2f", newVal) or tostring(newVal))
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            if dragging then
+                dragging = false
+                -- Destruction propre de l'Event pour éviter les bugs gris / lags
+                if moveConnection then
+                    moveConnection:Disconnect()
+                    moveConnection = nil
+                end
+                if SaveConfig then SaveConfig() end
+            end
         end
     end)
 end
@@ -3600,7 +3663,7 @@ CreateBrightBar(tpsCont, "Align Speed", 0.01, 0.2, "AlignSpeed", true)
 btnTPSettings.MouseButton1Click:Connect(function()
     TPS.Visible = not TPS.Visible
     Config.TpMenuVisible = TPS.Visible
-    SaveConfig()
+    if SaveConfig then SaveConfig() end
 end)
 
 CreateSectionHeader(pAuto, "SETTINGS")
