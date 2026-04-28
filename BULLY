@@ -1802,7 +1802,7 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- 🦾 AUTO TP ON SCRIPT LOAD (CORRIGÉ POUR TP GORE)
+-- 🦾 AUTO TP ON SCRIPT LOAD (CORRIGÉ POUR TP GORE + PHYSIQUE)
 -- =========================================================
 if Config.TpSettings and Config.TpSettings.TpOnLoad then
     task.spawn(function()
@@ -1820,19 +1820,26 @@ if Config.TpSettings and Config.TpSettings.TpOnLoad then
         -- 3. On attend que le Target Selector définisse la meilleure cible
         task.wait(0.5)
 
-        if SharedState.SelectedPetData then
+        -- 🛡️ FIX : On attend que le personnage soit VRAIMENT prêt et stabilisé
+        local player = game:GetService("Players").LocalPlayer
+        local char = player.Character or player.CharacterAdded:Wait()
+        local hrp = char:WaitForChild("HumanoidRootPart", 5)
+        
+        -- Pause cruciale pour laisser le perso toucher le sol et la physique s'activer
+        task.wait(1.5) 
+
+        if SharedState.SelectedPetData and hrp then
             -- 4. ON CACHE LE HUB pour éviter les lags visuels pendant le TP Gore
             pcall(function() if SG then SG.Enabled = false end end)
             pcall(function() if HUD then HUD.Enabled = false end end)
 
             -- 5. EXÉCUTION DU VRAI MOTEUR TP (runAutoSnipe)
-            -- On s'assure de passer par la fonction globale qui gère le Front/Side
             local success, err = pcall(function()
                 runAutoSnipe()
             end)
 
             if not success then
-                warn("ScruliHub: Erreur lors du TP Load: " .. tostring(err))
+                warn("ScruliHub:bro tp work is just u : " .. tostring(err))
             end
 
             -- 6. Pause de stabilisation avant de réafficher l'UI
@@ -1840,7 +1847,7 @@ if Config.TpSettings and Config.TpSettings.TpOnLoad then
             pcall(function() if SG then SG.Enabled = true end end)
             pcall(function() if HUD then HUD.Enabled = true end end)
         else
-            warn("ScruliHub: Aucune cible détectée pour le TP Load.")
+            warn("ScruliHub:no brainrot detect bro.")
         end
     end)
 end
