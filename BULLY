@@ -211,88 +211,100 @@ local PRIORITY_LIST = {
 
 
 
-     local toggleDesyncFunc
-     do
-         local hooked = false
-         local currentHook = nil
-         local savedCFrameMobile = nil
-         local serverIndicator = nil
-    
-         -- Petite fonction pour le cube noir (Indicateur CatHUB)
-         local function createServerIndicator(position)
-            pcall(function() if workspace:FindFirstChild("Scruli_ServerPos") then workspace.Scruli_ServerPos:Destroy()
-      end end)
-           local folder = Instance.new("Folder", workspace); folder.Name = "Scruli_ServerPos"
-          local box = Instance.new("Part", folder)
-            box.Name = "ServerBox"; box.Size = Vector3.new(4, 5, 4); box.CFrame = CFrame.new(position)
-            box.Anchored = true; box.CanCollide = false; box.Transparency = 0.6; box.Color = Color3.new(0,0,0);
-      box.Material = Enum.Material.SmoothPlastic
-            local bb = Instance.new("BillboardGui", box); bb.Size = UDim2.new(0, 140, 0, 30); bb.StudsOffset =
-      Vector3.new(0, 3.5, 0); bb.AlwaysOnTop = true
-            local txt = Instance.new("TextLabel", bb); txt.Size = UDim2.new(1, 0, 1, 0); txt.BackgroundTransparency =
-      1; txt.Text = "SERVER POSITION"; txt.TextColor3 = Color3.new(1,1,1); txt.Font = Enum.Font.GothamBold; txt.TextSize
-      = 14
-            serverIndicator = folder
+local toggleDesyncFunc
+do
+    local hooked = false
+    local currentHook = nil
+    local CachetteSecurisee = nil -- Mémoire pour le Mobile
+
+    toggleDesyncFunc = function(state)
+        local raknet = getgenv and getgenv().raknet
+        if not raknet then 
+            warn("ScruliHub: RakNet non supporté sur cet exécuteur.")
+            return false
         end
-         toggleDesyncFunc = function(state)
-            local raknet = getgenv and getgenv().raknet
-            if state == nil then state = not hooked end
-            if state == hooked then return state end
-   
-            local UserInputService = game:GetService("UserInputService")
-            local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
-           local LocalPlayer = game:GetService("Players").LocalPlayer
-            local char = LocalPlayer.Character
-           local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            local hum = char and char:FindFirstChild("Humanoid")
-   
-          if state then
-                if isMobile then
-                    -- 📱 MOBILE : LOGIQUE CATHUB (HITBOX TP)
-                    if hrp then
-                        savedCFrameMobile = hrp.CFrame
-                        -- On envoie la hitbox dans la zone CatHUB
-                        hrp.CFrame = CFrame.new(-352.761902, -56.8626175, 7.06043243, 0, 0, -1, 0, 1, 0, 1, 0, 0)
-                        if raknet and raknet.desync then pcall(function() raknet.desync(true) end) end
-                        createServerIndicator(savedCFrameMobile.Position)
-                      if hum then hum.WalkSpeed = 20 end
-                    end
-                else
-                   -- 💻 PC : FONCTION VXNTA PURE (TON CODE D'ORIGINE)
-                    if raknet and not currentHook then
-                        pcall(function()
-                           currentHook = raknet.add_send_hook(function(packet)
-                                if packet.PacketId == 0x1B then
-                                    local data = packet.AsBuffer
-                                    buffer.writeu32(data, 1, 0xFFFFFFFF)
-                                    packet:SetData(data)
-                                end
-                            end)
-                        end)
-                    end
+
+        if state == nil then state = not hooked end
+        if state == hooked then return state end
+        
+        local UserInputService = game:GetService("UserInputService")
+        local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+        local LocalPlayer = game:GetService("Players").LocalPlayer
+        
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChild("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        
+        if state then
+            if isMobile then
+                -- 🟢 POUR MOBILE : GHOST ANCHOR (FLUIDITÉ 100%)
+                if hrp and hum then
+                    CachetteSecurisee = hrp.CFrame
+                    hrp.Anchored = true
+                    task.wait(0.15)
+                    
+                    pcall(function()
+                        if type(raknet.desync) == "function" then
+                            raknet.desync(true)
+                        else
+                            raknet.desync = true
+                        end
+                    end)
+                    
+                    hrp.Anchored = false
+                    hum.WalkSpeed = 20 -- Speed Boost !
                 end
             else
-              if isMobile then
-                   -- 📱 MOBILE : RETOUR CATHUB
-                    if raknet and raknet.desync then pcall(function() raknet.desync(false) end) end
-                    if hrp and savedCFrameMobile then hrp.CFrame = savedCFrameMobile end
-                    if serverIndicator then serverIndicator:Destroy(); serverIndicator = nil end
-                    if hum then hum.WalkSpeed = 16 end
-                else
-                   -- 💻 PC : DÉSACTIVATION VXNTA
-                   if raknet and currentHook then
-                        pcall(function() raknet.remove_send_hook(currentHook) end)
-                        currentHook = nil
-                    end
+                -- 🟢 POUR PC : FONCTION VXNTA PURE
+                if not currentHook then
+                    pcall(function()
+                        currentHook = raknet.add_send_hook(function(packet)
+                            if packet.PacketId == 0x1B then
+                                local data = packet.AsBuffer
+                                buffer.writeu32(data, 1, 0xFFFFFFFF)
+                                packet:SetData(data)
+                            end
+                        end)
+                    end)
                 end
-           end
-   
-            hooked = state
-            return hooked
+            end
+        else
+            if isMobile then
+                -- 🔴 POUR MOBILE : RETOUR SÉCURISÉ (ZERO LAGBACK)
+                if hrp and hum then
+                    hum.WalkSpeed = 16
+                    hrp.Anchored = true
+                    
+                    if CachetteSecurisee then
+                        hrp.CFrame = CachetteSecurisee
+                    end
+                    task.wait(0.1)
+                    
+                    pcall(function()
+                        if type(raknet.desync) == "function" then
+                            raknet.desync(false)
+                        else
+                            raknet.desync = false
+                        end
+                    end)
+                    
+                    task.wait(0.1)
+                    hrp.Anchored = false
+                end
+            else
+                -- 🔴 POUR PC : DÉSACTIVATION VXNTA
+                if currentHook then
+                    pcall(function() raknet.remove_send_hook(currentHook) end)
+                    currentHook = nil
+                end
+            end
         end
-        _G.toggleDesyncFunc = toggleDesyncFunc
+        
+        hooked = state
+        return hooked
     end
-
+    _G.toggleDesyncFunc = toggleDesyncFunc
+end
 -- =========================================================
 -- 🦾 NOTIFICATIONS LETHAL HUB
 -- =========================================================
@@ -1310,81 +1322,79 @@ local function playFullScreenFlash()
 end
 
 -- =========================================================
--- 🦾 MOTEUR DUAL TP (FRONT = Smart Scruli / SIDE = Mogger Hub)
+-- 🦾 MOTEUR DUAL TP (FRONT = Scruli Hub / SIDE = Mogger Hub)
 -- =========================================================
 runAutoSnipe = function()
     if State.isTpMoving then return end
-
+    
     local targetPetData = SharedState.SelectedPetData and SharedState.SelectedPetData.animalData
     if not targetPetData then return end
-
+    
     local char = game:GetService("Players").LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChild("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return end
-
+    
     local targetPart = findAdorneeGlobal(targetPetData)
     if not targetPart then return end
-
+    
     State.isTpMoving = true
-
+    
     pcall(function()
-        local startPos = hrp.Position
         local exactPos = targetPart.Position
         local carpetName = Config.TpSettings.Tool
         local carpet = game:GetService("Players").LocalPlayer.Backpack:FindFirstChild(carpetName) or char:FindFirstChild(carpetName)
-
-        if _G.TP_Mode == "Front" then
+        
+if _G.TP_Mode == "Front" then
             -- ==========================================
-            -- 🔴 MODE FRONT : SMART PATH (Anti-Noclip)
+            -- 🔴 MODE FRONT : DYNAMIQUE (Basé sur le Ping)
             -- ==========================================
             if carpet then hum:EquipTool(carpet) end
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
             task.wait(0.01)
 
-            local waitTime = (1 / (Config.TpSettings.MoveToBaseSpeed or 250)) * 5
-            local jumpPower = Config.TpSettings.JumpPower or 180
 
+-- 📡 Utilisation des réglages du panel TP Config
+            local waitTime = (1 / (Config.TpSettings.MoveToBaseSpeed or 250)) * 5
+            local tpVelocity = Config.TpSettings.JumpPower or 180
+            
             local isSecondFloor = exactPos.Y > 10
             local plotIdx = getClosestBaseIdx(exactPos)
             local targetBasePos = isSecondFloor and BASES_HIGH[plotIdx] or BASES_LOW[plotIdx]
-
-            -- 🚀 ÉTAPE 1 : LE GRAND SAUT (Verticalité initiale)
-            hrp.AssemblyLinearVelocity = Vector3.new(0, jumpPower, 0)
-            task.wait(0.1)
-
-            -- 📍 ÉTAPE 2 : LE TP MI-CHEMIN (Seuil réduit à 35 pour la discrétion)
-            local dist = (exactPos - hrp.Position).Magnitude
-            if dist > 35 then
-                local midPoint = startPos:Lerp(exactPos, 0.5) + Vector3.new(0, 40, 0)
-                hrp.Anchored = true
-                hrp.CFrame = CFrame.new(midPoint)
-                task.wait(waitTime)
-                hrp.Anchored = false
-                task.wait(0.02)
+            
+            local jumpStart = tick()
+            while hrp.Position.Y < math.max(targetBasePos.Y, 50) and (tick() - jumpStart) < 2 do
+                hrp.AssemblyLinearVelocity = Vector3.new(0, Config.TpSettings.JumpPower, 0)
+                game:GetService("RunService").Heartbeat:Wait()
             end
 
-            -- 🏗️ ÉTAPE 3 : TP VERS LA BASE
             hrp.Anchored = true
-            hrp.CFrame = CFrame.new(targetBasePos)
-            task.wait(waitTime)
+            for i = 1, 10 do
+                if (hrp.Position - targetBasePos).Magnitude > 1 then
+                    hrp.CFrame = CFrame.new(targetBasePos)
+                    task.wait(waitTime) 
+                end
+            end
             hrp.Anchored = false
             hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 
-            -- 🌿 FIX ÉTAGE 1 : Utilisation des spots de spawn au sol pour éviter les collisions
             if not isSecondFloor then
                 local bestSpot, minDst = CLONE_POSITIONS_FLOOR[1], math.huge
                 for _, v in ipairs(CLONE_POSITIONS_FLOOR) do
                     local d = (targetPart.Position - v).Magnitude
                     if d < minDst then minDst = d; bestSpot = v end
                 end
+                
                 hrp.Anchored = true
-                hrp.CFrame = CFrame.new(bestSpot)
-                task.wait(waitTime)
+                for i = 1, 5 do
+                    if (hrp.Position - bestSpot).Magnitude > 3 then
+                        hrp.CFrame = CFrame.new(bestSpot)
+                        task.wait(waitTime) 
+                    end
+                end
                 hrp.Anchored = false
             end
 
-            -- Alignement pour le clone
             local bestFace, minFace = FACE_TARGETS[1], math.huge
             for _, v in ipairs(FACE_TARGETS) do
                 local d = (hrp.Position - v).Magnitude
@@ -1392,35 +1402,35 @@ runAutoSnipe = function()
             end
             task.wait(waitTime * 2)
             hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bestFace.X, hrp.Position.Y, bestFace.Z))
-
-            if isSecondFloor or not _G._isTargetPlotUnlocked(targetPetData.plot) then
+            
+            if isSecondFloor or not _G._isTargetPlotUnlocked(targetPetData.plot) then 
                 walkForward(0.3)
-                task.wait(Config.TpSettings.CloneDelay or 0.3)
+                task.wait(Config.TpSettings.CloneDelay)
                 instantClone()
-                while _G.isCloning do task.wait() end
+                while _G.isCloning do task.wait() end 
                 task.wait(0.15)
-
+                
                 char = game:GetService("Players").LocalPlayer.Character
                 hrp = char and char:FindFirstChild("HumanoidRootPart")
                 hum = char and char:FindFirstChild("Humanoid")
                 if not hrp or not hum then return end
                 carpet = game:GetService("Players").LocalPlayer.Backpack:FindFirstChild(carpetName) or char:FindFirstChild(carpetName)
-            end
+           end
 
         elseif _G.TP_Mode == "Side" then
             -- ==========================================
-            -- 🔵 MODE SIDE : LA GLISSADE FURTIVE (Mogger Hub)
+            -- 🔵 MODE SIDE : LA GLISSADE FURTIVE DU MOGGER HUB
             -- ==========================================
             local targetPodium, targetPosition = getTargetPodiumAndSafePosition(targetPetData, exactPos)
             local claimPart = findClaimModel(targetPodium)
-
+            
             local directionToPet = targetPosition - hrp.Position
             if directionToPet.Magnitude > 0 then
                 directionToPet = Vector3.new(directionToPet.X, 0, directionToPet.Z).Unit
             else
                 directionToPet = Vector3.new(0, 0, -1)
             end
-
+            
             local dirBehind
             if claimPart then
                 local df = claimPart.Position - targetPosition
@@ -1432,64 +1442,78 @@ runAutoSnipe = function()
             else
                 dirBehind = -directionToPet
             end
-
+            
             local behindPos = targetPosition + (dirBehind * 7)
             local rpPre = RaycastParams.new()
             rpPre.FilterDescendantsInstances = {char}
             rpPre.FilterType = Enum.RaycastFilterType.Exclude
-
+            
             local resPre = game:GetService("Workspace"):Raycast(
                 Vector3.new(behindPos.X, targetPosition.Y + 10, behindPos.Z),
                 Vector3.new(0, -1000, 0),
                 rpPre
             )
-
+            
             if not resPre then return end
-
+            
             local finalHeight = resPre.Position.Y + 5.5
             local finalPos = Vector3.new(behindPos.X, finalHeight, behindPos.Z)
             local lookTarget = claimPart and Vector3.new(claimPart.Position.X, finalPos.Y, claimPart.Position.Z) or targetPosition
             local finalFacing = CFrame.lookAt(finalPos, lookTarget)
             local facingRot = finalFacing - finalFacing.Position
-
+            
             if hrp.Position.Y > 25 and targetPosition.Y > 25 then
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 hrp.AssemblyAngularVelocity = Vector3.zero
                 hrp.CFrame = CFrame.new(finalPos) * facingRot
             else
+                -- 1. Equiper le tapis
                 if carpet and hum and hum.Parent then
                     hum:EquipTool(carpet)
                     task.wait(0.01)
                 end
+                
                 if not char.Parent or not hrp.Parent then return end
+                
+                -- 2. Propulsion du saut
                 hrp.CFrame = CFrame.new(hrp.Position) * facingRot
                 local v = hrp.AssemblyLinearVelocity
                 hrp.AssemblyLinearVelocity = Vector3.new(v.X, 200, v.Z)
                 task.wait(0.08)
+                
                 if not char.Parent or not hrp.Parent then return end
+                
+                -- 3. Glissade en l'air (sans dépendre d'un modèle sur la map)
                 if hum and hum.Parent then
                     hum:ChangeState(Enum.HumanoidStateType.Jumping)
                     task.wait(0.02)
                 end
+                
                 if not char.Parent or not hrp.Parent then return end
+                
                 local positionBehindPet = targetPosition + (dirBehind * 18)
                 local safeAirPos = Vector3.new(positionBehindPet.X, hrp.Position.Y, positionBehindPet.Z)
                 hrp.CFrame = CFrame.new(safeAirPos) * facingRot
                 task.wait(0.12)
+                
                 if not char.Parent or not hrp.Parent then return end
+                
+                -- 4. Atterrissage derrière
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 hrp.AssemblyAngularVelocity = Vector3.zero
                 hrp.CFrame = CFrame.new(finalPos) * facingRot
             end
-
+            
             task.wait(0.06)
             task.wait(0.25)
+            
+            -- Clone de la cible
             walkForward(0.4)
             task.wait(0.4)
             instantClone()
-            while _G.isCloning do task.wait() end
+            while _G.isCloning do task.wait() end 
             task.wait(0.2)
-
+            
             char = game:GetService("Players").LocalPlayer.Character
             hrp = char and char:FindFirstChild("HumanoidRootPart")
             hum = char and char:FindFirstChild("Humanoid")
@@ -1498,45 +1522,53 @@ runAutoSnipe = function()
         end
 
         -- ================================================================
-        -- 🧠 ALIGNEMENT FINAL (Commun aux deux modes)
+        -- 🧠 ALIGNEMENT SUR LE BRAINROT
         -- ================================================================
         task.wait(0.15)
         if carpet then hum:EquipTool(carpet) end
-
+        
         local shouldAnchor = (_G.TP_Mode == "Front")
+        
         local verticalDiff = targetPart.Position.Y - hrp.Position.Y
-
         if verticalDiff > 2 then
             local airPos = Vector3.new(targetPart.Position.X, targetPart.Position.Y - 8, targetPart.Position.Z)
-            local plat = Instance.new("Part", workspace)
-            plat.Size = Vector3.new(3, 1, 3); plat.Position = airPos - Vector3.new(0, 3, 0)
-            plat.Anchored = true; plat.Transparency = 1; plat.Name = "ScruliSafePlat"
-
+            local plat = Instance.new("Part", game:GetService("Workspace"))
+            plat.Size = Vector3.new(3, 1, 3)
+            plat.Position = airPos - Vector3.new(0, 5, 0)
+            plat.Anchored = true
+            plat.Transparency = 0.3
+            
             if shouldAnchor then hrp.Anchored = true end
-            for i = 1, 10 do
-                if not game:GetService("Players").LocalPlayer:GetAttribute("Stealing") then
+         for i = 1, 10 do 
+                if not game:GetService("Players").LocalPlayer:GetAttribute("Stealing") then 
                     hrp.AssemblyLinearVelocity = Vector3.zero
                     hrp.CFrame = CFrame.new(airPos)
-                    task.wait(Config.TpSettings.AlignSpeed or 0.05)
-                end
+                    task.wait(Config.TpSettings.AlignSpeed or 0.05) -- Lié au slider Align Speed
+                end 
             end
+
+
             if shouldAnchor then hrp.Anchored = false end
-            task.delay(10, function() if plat then plat:Destroy() end end)
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            
+            task.delay(10, function() plat:Destroy() end)
         else
             if shouldAnchor then hrp.Anchored = true end
-            for i = 1, 10 do
+for i = 1, 10 do 
                 if game:GetService("Players").LocalPlayer:GetAttribute("Stealing") then break end
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 if (hrp.Position - targetPart.Position).Magnitude > 3 then
                     hrp.CFrame = CFrame.new(targetPart.Position)
-                    task.wait(Config.TpSettings.AlignSpeed or 0.05)
-                end
+                    task.wait(Config.TpSettings.AlignSpeed or 0.05) -- Lié au slider Align Speed
+                end 
             end
-            if shouldAnchor then hrp.Anchored = false end
-        end
-        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-    end)
 
+            if shouldAnchor then hrp.Anchored = false end
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        end
+        
+    end)
+    
     State.isTpMoving = false
 end
 
@@ -1789,56 +1821,28 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- 🦾 AUTO TP ON SCRIPT LOAD (CORRIGÉ POUR TP GORE + PHYSIQUE)
+-- 🦾 AUTO TP ON SCRIPT LOAD (LE VRAI TP, DIRECT ET SIMPLE)
 -- =========================================================
 if Config.TpSettings and Config.TpSettings.TpOnLoad then
     task.spawn(function()
-        -- 1. On force les paramètres de vitesse et de mode pour le "Gore" TP
-        _G.TP_Mode = Config.TpSettings.Mode or "Front"
-        Config.VisibleTP = true
-
-        -- 2. Attente de sécurité pour que le radar (SharedState) soit chargé
-        local waitLimit = 0
-        while (not SharedState.AllAnimalsCache or #SharedState.AllAnimalsCache == 0) and waitLimit < 100 do
-            task.wait(0.1)
-            waitLimit = waitLimit + 1
-        end
-
-        -- 3. On attend que le Target Selector définisse la meilleure cible
-        task.wait(0.5)
-
-        -- 🛡️ FIX : On attend que le personnage soit VRAIMENT prêt et stabilisé
+        -- 1. On attend que ton personnage soit bien chargé dans le jeu
         local player = game:GetService("Players").LocalPlayer
         local char = player.Character or player.CharacterAdded:Wait()
-        local hrp = char:WaitForChild("HumanoidRootPart", 5)
-        
-        -- Pause cruciale pour laisser le perso toucher le sol et la physique s'activer
-        task.wait(1.5) 
+        char:WaitForChild("HumanoidRootPart", 10)
+        char:WaitForChild("Humanoid", 10)
 
-        if SharedState.SelectedPetData and hrp then
-            -- 4. ON CACHE LE HUB pour éviter les lags visuels pendant le TP Gore
-            pcall(function() if SG then SG.Enabled = false end end)
-            pcall(function() if HUD then HUD.Enabled = false end end)
-
-            -- 5. EXÉCUTION DU VRAI MOTEUR TP (runAutoSnipe)
-            local success, err = pcall(function()
-                runAutoSnipe()
-            end)
-
-            if not success then
-                warn("ScruliHub:bro tp work is just u : " .. tostring(err))
-            end
-
-            -- 6. Pause de stabilisation avant de réafficher l'UI
-            task.wait(2.5)
-            pcall(function() if SG then SG.Enabled = true end end)
-            pcall(function() if HUD then HUD.Enabled = true end end)
-        else
-            warn("ScruliHub:no brainrot detect bro.")
+        -- 2. On attend que le radar ait trouvé la meilleure cible
+        while not SharedState.SelectedPetData do
+            task.wait(0.2)
         end
+
+        -- 3. Petite pause de 1 seconde pour être sûr que la map et ton perso sont stables
+        task.wait(1)
+
+        -- 4. ON LANCE EXACTEMENT LE MÊME TP QUE LA TOUCHE MANUELLE
+        pcall(runAutoSnipe)
     end)
 end
-
 -- =========================================================
 -- 🦾 AUTO TURRET ENGINE (PURE LETHAL HUB LOGIC)
 -- =========================================================
@@ -1868,22 +1872,24 @@ local function applyVisuals(target)
         return
     end
 
-      
-     local function getClosestSentry()
-         local _, hrp = getChar()
-         local closest, shortestDist = nil, math.huge
-         -- On cible uniquement Plots et Workspace (enfants directs)
-         local searchAreas = {workspace, workspace:FindFirstChild("Plots")}
-    
-         for _, area in ipairs(searchAreas) do
-             if not area then continue end
-           for _, inst in ipairs(area:GetChildren()) do
-                if inst.Name:match("^Sentry_") then
-                    -- ... (garde le reste de ta logique de distance)
+    local function getClosestSentry()
+        local _, hrp = getChar()
+        local closest, shortestDist = nil, math.huge
+        for _, inst in ipairs(Workspace:GetDescendants()) do
+            if inst.Name:match("^Sentry_") then
+                if hasExclamation(inst) then
+                    local root = inst:IsA("BasePart") and inst or inst:FindFirstChildWhichIsA("BasePart", true)
+                    if root then
+                        local dist = (hrp.Position - root.Position).Magnitude
+                        if dist < shortestDist then
+                            shortestDist = dist
+                            closest = inst
+                        end
+                    end
                 end
             end
         end
-        return closest
+         return closest
     end
 
     while true do
@@ -2009,37 +2015,50 @@ task.spawn(function()
         if nameFound=="" then nameFound = model.Name~="" and model.Name or "Brainrot" end
         return nameFound,genFound
     end
-
 local function scanConveyor()
-        local results = {}
-        local scanCount = 0 -- Compteur pour la furtivité
-        
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            scanCount = scanCount + 1
-            -- 🛡️ ANTI-DETECTION : Fait une micro-pause tous les 1000 objets pour ne pas alerter l'anti-triche
-            if scanCount % 1000 == 0 then RunService.Heartbeat:Wait() end 
+    local results = {}
+    local scanCount = 0
 
-            if not (obj:IsA("ProximityPrompt") and obj.Enabled) then continue end
+    -- On scanne tout le Workspace pour être sûr de rien rater (GORE)
+    -- Mais on ajoute une sécurité pour être indétectable
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        scanCount = scanCount + 1
+
+        -- 🛡️ ANTI-CHEAT : Toutes les 400 itérations, on fait une micro-pause
+        -- Ça évite que ton script ne "bloque" le CPU, ce qui est grillé par l'anti-triche.
+        if scanCount % 400 == 0 then task.wait() end
+
+        if obj:IsA("ProximityPrompt") and obj.Enabled then
             local txt = obj.ActionText or ""
-            if not (txt=="Purchase" or txt:lower():find("purchase") or txt:lower():find("comprar")) then continue end
-            local part = obj.Parent
-            if not part then continue end
-            local realPart = part:IsA("Attachment") and part.Parent or part
-            if not (realPart and realPart:IsA("BasePart")) then continue end
+            -- Support multi-langues (Purchase / Comprar)
+            if txt == "Purchase" or txt:lower():find("purchase") or txt:lower():find("comprar") then
+                local part = obj.Parent
+                local realPart = part:IsA("Attachment") and part.Parent or part
 
-            local model,cur = nil,realPart
-            for _ = 1,8 do
-                if cur and cur:IsA("Model") then model=cur; break end
-                cur = cur and cur.Parent
+                if realPart and realPart:IsA("BasePart") then
+                    local model = nil
+                    local cur = realPart
+                    for i = 1, 8 do
+                        if cur and cur:IsA("Model") then model = cur; break end
+                        cur = cur and cur.Parent
+                    end
+
+                    local name, gen = getBrainrotName(model)
+                    table.insert(results, {
+                        name = name,
+                        gen = gen,
+                        prompt = obj,
+                        part = realPart,
+                        model = model,
+                        source = "ESTEIRA",
+                        uid = "buy_" .. tostring(obj)
+                    })
+                end
             end
-            
-            local name,gen = getBrainrotName(model)
-            table.insert(results,{
-                name=name, gen=gen, prompt=obj, part=realPart, model=model, source="ESTEIRA", uid="esteira_"..tostring(obj),
-            })
         end
-        return results
     end
+    return results
+end
 
     SharedState.ConveyorAnimals = {}
     local function refreshConveyor()
@@ -4882,143 +4901,48 @@ task.spawn(function()
 end)
 
 
+
+
 -- =========================================================
--- 🌐 SCRULI HUB - DISCORD WEBHOOK & LIVE SITE TRACKER
+-- AUTO KICK ON STEAL (BULLYHUB SECURE ENGINE)
 -- =========================================================
-local WebhookURL = "https://discord.com/api/webhooks/1495890268845641840/kOdm-FjV0t8sjY-NN3XOfkX-coImLlE-o1aiuTCQbQdau3KpZqZZZDwICE1N1aWp4yti"
-
--- Configuration locale si elle n'existe pas dans ton menu
-local Config = Config or { AutoKickOnSteal = false } 
-
--- 1️⃣ FONCTION : Envoi vers Discord
-local function sendWebhookLog(brainrotName)
-    local HttpService = game:GetService("HttpService")
-    local playerName = game.Players.LocalPlayer.Name
-
-    local data = {
-        ["content"] = "",
-        ["embeds"] = {{
-            ["title"] = "🚨A BRAINROT GOT STOLEN!",
-            ["description"] = "THE PLAYER **" .. playerName .. "** JUST STOLE!\n\n**BRAINROT STOLEN :** `" .. tostring(brainrotName) .. "`",
-            ["type"] = "rich",
-            ["color"] = tonumber(0xff8800),
-            ["footer"] = { ["text"] = "Scruli Hub  - Steal tracker" }
-        }}
-    }
-
-    local jsonData = HttpService:JSONEncode(data)
-    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
-    
-    if requestFunc then
-        pcall(function()
-            requestFunc({
-                Url = WebhookURL,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = jsonData
-            })
-        end)
-        print("f" .. tostring(brainrotName))
-    end
-end
-
--- 2️⃣ FONCTION : Envoi vers ton Dashboard (API Render)
-local function logStealToSite(brainrotName)
-    local key = getgenv().scruli_key
-    
-    if not key or key == "" then 
-        warn("⚠️ SCRULI: Pas de clé de licence (getgenv().scruli_key) ! Le vol n'ira pas sur le site web.")
-        return 
-    end
-    
-    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
-    if requestFunc then
-        local success, err = pcall(function()
-            local response = requestFunc({
-                Url = "https://scruli-api-pro.onrender.com/v4/log-steal",
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = game:GetService("HttpService"):JSONEncode({ key = key, item = brainrotName })
-            })
-            print("! (Status: " .. tostring(response and response.StatusCode or "Inconnu") .. ")")
-        end)
-        
-        if not success then
-            warn(" ->", err)
-        end
-    else
-        warn("")
-    end
-end
-
--- 3️⃣ FONCTION : Sécurité (Auto Kick)
 local function kickPlayer()
-    print("")
     local ok = pcall(function()
-        if game.Shutdown then game:Shutdown() else game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end
+        if game.Shutdown then
+            game:Shutdown()
+        else
+            game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK")
+        end
     end)
-    if not ok then pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end) end
+    if not ok then
+        pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end)
+    end
 end
-
--- =========================================================
--- 🚀 DÉMARRAGE DU TRACKER DE VOLS
--- =========================================================
-print("")
 
 task.spawn(function()
     local function checkSteal(gui)
+        if not Config.AutoKickOnSteal then return end
         local txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.Text
-        
-        -- Détection du message de réussite du jeu
         if txt and string.find(txt, "You stole") then
-            
-            -- Anti-spam
-            if gui:GetAttribute("WebhookSent") then return end
-            gui:SetAttribute("WebhookSent", true)
-
-            print(" Texte brut :", txt)
-
-            -- Extraction du nom
-            local petStolen = string.match(txt, "You stole a (.+)!") 
-                           or string.match(txt, "You stole (.+)!") 
-                           or string.match(txt, "You stole a (.+)") 
-                           or string.match(txt, "You stole (.+)") 
-                           or "un Brainrot inconnu"
-            
-            -- Nettoyage des balises
-            petStolen = string.gsub(petStolen, "<[^>]+>", "")
-            print("", petStolen)
-            
-            -- Envoi asynchrone aux deux plateformes
-            task.spawn(function()
-                sendWebhookLog(petStolen)
-                logStealToSite(petStolen)
-            end)
-
-            if Config.AutoKickOnSteal then
-                kickPlayer()
-            end
+            kickPlayer()
         end
     end
     
     local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
     
-    -- Surveille les nouveaux GUI qui apparaissent
     PlayerGui.DescendantAdded:Connect(function(gui)
         checkSteal(gui)
         if gui:IsA("TextLabel") or gui:IsA("TextButton") then
             gui:GetPropertyChangedSignal("Text"):Connect(function()
                 checkSteal(gui)
             end)
-         end
+        end
     end)
     
-    -- Vérifie les GUI déjà présents
     for _, gui in ipairs(PlayerGui:GetDescendants()) do
         checkSteal(gui)
     end
 end)
-
 -- =========================================================
 -- [KEYBINDS GLOBAUX (SAFE EXECUTION)]
 -- =========================================================
@@ -5882,30 +5806,20 @@ if Config.AutoSellOnSteal ~= nil then autoSellEnabled = Config.AutoSellOnSteal e
     btnClick.TextSize = 11
     Instance.new("UICorner", btnClick).CornerRadius = UDim.new(0, 6)
 
-local function getPetModelFromWorkspace(petName)
-    -- On désactive la recherche 3D lourde sur mobile pour éviter les crashs
-    local UserInputService = game:GetService("UserInputService")
-    if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
-        return nil 
-    end
-
-    local foundModel = nil
-    pcall(function()
-        -- Au lieu de chercher dans TOUTE la map, on cible uniquement là où les pets existent
-        local plots = Workspace:FindFirstChild("Plots")
-        if not plots then return end
-        
-        for _, obj in ipairs(plots:GetDescendants()) do
-            if obj:IsA("Model") and obj.Name == petName then
-                if obj:FindFirstChildWhichIsA("BasePart") then
-                    foundModel = obj
-                    break
+    local function getPetModelFromWorkspace(petName)
+        local foundModel = nil
+        pcall(function()
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if obj:IsA("Model") and obj.Name == petName then
+                    if obj:FindFirstChildWhichIsA("BasePart") then
+                        foundModel = obj
+                        break
+                    end
                 end
             end
-        end
-    end)
-    return foundModel
-end
+        end)
+        return foundModel
+    end
 
     local function updateDisplay()
         viewport:ClearAllChildren()
