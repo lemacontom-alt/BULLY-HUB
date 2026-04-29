@@ -1352,7 +1352,7 @@ runAutoSnipe = function()
         
         if _G.TP_Mode == "Front" then
             -- ==========================================
-            -- 🔴 MODE FRONT : JUMP -> COORDS -> JUMP -> BASE -> CLONE
+            -- 🔴 MODE FRONT : JUMP -> +20 STUDS -> JUMP -> BASE -> CLONE
             -- ==========================================
             if carpet then hum:EquipTool(carpet) end
             task.wait(0.01)
@@ -1361,19 +1361,29 @@ runAutoSnipe = function()
             local waitTime = (1 / (Config.TpSettings.MoveToBaseSpeed or 250)) * 5
             local tpVelocity = Config.TpSettings.JumpPower or 180
             
+            -- On enregistre ta position de départ
+            local startPos = hrp.Position
             local isSecondFloor = exactPos.Y > 10
             local plotIdx = getClosestBaseIdx(exactPos)
             local targetBasePos = isSecondFloor and BASES_HIGH[plotIdx] or BASES_LOW[plotIdx]
             
-            -- 0. JUMP POWER POUR ALLER AUX COORDONNÉES (ACCÉLÉRÉ ⚡)
+            -- 0. JUMP POWER (L'impulsion de départ)
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
             hrp.AssemblyLinearVelocity = Vector3.new(0, tpVelocity, 0)
-            task.wait(0.03) -- Délai ultra court pour aller plus vite
+            task.wait(0.03) 
             
-            -- TP AUX COORDONNÉES
+            -- 🧠 CALCUL MATHÉMATIQUE : À EXACTEMENT 20 STUDS DE TA BASE
+            local dir = targetBasePos - startPos
+            local interPos = startPos
+            if dir.Magnitude > 20 then
+                -- On ajoute 20 studs dans la direction de la base cible
+                interPos = startPos + (dir.Unit * 20)
+            end
+            
+            -- TP À 20 STUDS (Garde la même hauteur Y que ton sol d'origine)
             hrp.Anchored = true
-            hrp.CFrame = CFrame.new(-411.30, -6.47, 67.33)
-            task.wait(0.03) -- Délai ultra court
+            hrp.CFrame = CFrame.new(interPos.X, startPos.Y, interPos.Z)
+            task.wait(0.03) 
             hrp.Anchored = false
 
             -- 1. JUMP POWER POUR ALLER À LA BASE
@@ -1554,7 +1564,7 @@ runAutoSnipe = function()
                 if not game:GetService("Players").LocalPlayer:GetAttribute("Stealing") then 
                     hrp.AssemblyLinearVelocity = Vector3.zero
                     hrp.CFrame = CFrame.new(airPos)
-                    task.wait(Config.TpSettings.AlignSpeed or 0.05) -- Lié au slider Align Speed
+                    task.wait(Config.TpSettings.AlignSpeed or 0.05)
                 end 
             end
 
@@ -1569,7 +1579,7 @@ runAutoSnipe = function()
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 if (hrp.Position - targetPart.Position).Magnitude > 3 then
                     hrp.CFrame = CFrame.new(targetPart.Position)
-                    task.wait(Config.TpSettings.AlignSpeed or 0.05) -- Lié au slider Align Speed
+                    task.wait(Config.TpSettings.AlignSpeed or 0.05)
                 end 
             end
 
@@ -1581,7 +1591,6 @@ runAutoSnipe = function()
     
     State.isTpMoving = false
 end
-
 -- =========================================================
 -- 🦾 DATA SCANNING & TARGETING (LETHAL HUB LOGIC PURE)
 -- =========================================================
@@ -1666,7 +1675,7 @@ end)
 -- 🧠 CORE AUTO-STEAL ENGINE (SEPARATED NEAREST & TARGET)
 -- =========================================================
 
--- 1. LE TARGET SELECTOR (Définit la cible de TELEPORTATION et d'ESP H24)
+-- 1. LE TARGET SELECTOR (Définit la cible H24)
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -1695,7 +1704,6 @@ task.spawn(function()
                         end
                         bestIndex = foundPrioIndex or 1
                     else
-                        -- MÊME SI NEAREST EST ACTIVÉ : La cible globale reste toujours le Highest par défaut (1)
                         bestIndex = 1
                     end
                 end
@@ -1706,43 +1714,38 @@ task.spawn(function()
     end
 end)
 
--- 2. LE STEAL SPAMMER (AMÉLIORÉ AVEC BYPASS PROMPT)
+-- 2. AUTO STEAL LOOP (DANS SA BULLE POUR NE RIEN BLOQUER)
 task.spawn(function()
-    local HOLD_DURATION = 0.5
-    
-    -- Fonction pour trouver la pièce physique du bouton (Nouveau script)
-    local function getPromptPart(prompt)
-        local parent = prompt.Parent
-        if parent:IsA("BasePart") then return parent end
-        if parent:IsA("Model") then
-            return parent.PrimaryPart or parent:FindFirstChildWhichIsA("BasePart")
-        end
-        if parent:IsA("Attachment") then return parent.Parent end
-        return parent:FindFirstChildWhichIsA("BasePart", true)
-    end
-
-    -- Nouvelle méthode de vol ultra-rapide (Bypass)
-    local function triggerPrompt(prompt)
+    -- Méthode de vol ultra-rapide (Bypass)
+    local function triggerPrompt(prompt, petName)
         if not prompt or not prompt:IsDescendantOf(workspace) then return end
 
         prompt.MaxActivationDistance = 9e9
         prompt.RequiresLineOfSight = false
         prompt.ClickablePrompt = true
 
+        local duration = (typeof(HOLD_DURATION) == "number") and HOLD_DURATION or 0.5
+        if Config.InstantSteal then duration = 0.1 end
+
+        -- 🔥 APPEL DE L'ANIMATION DE LA BARRE
+        if _G.TriggerStealProgress then
+            _G.TriggerStealProgress(duration, petName)
+        end
+
         if Config.InstantSteal and _G.executeInstantSteal then
-            pcall(function() _G.executeInstantSteal(prompt) end)
+             pcall(function() _G.executeInstantSteal(prompt) end)
         else
             local usedFire = pcall(function()
-                fireproximityprompt(prompt, 9e9, HOLD_DURATION)
+                fireproximityprompt(prompt, 9e9, duration)
             end)
 
             if not usedFire then
-                task.spawn(function() -- En arrière-plan pour ne pas bloquer les autres vols
-                    pcall(function()
+                task.spawn(function()
+                     pcall(function()
                         prompt:InputHoldBegin()
-                        task.wait(HOLD_DURATION)
+                        task.wait(duration)
                         prompt:InputHoldEnd()
-                    end)
+                     end)
                 end)
             end
         end
@@ -1757,7 +1760,7 @@ task.spawn(function()
         local promptToTrigger = nil
         local plotObj = nil
         
-        -- 🥷 SI NEAREST EST ACTIVÉ : La nouvelle méthode globale 
+        -- 🥷 SI NEAREST EST ACTIVÉ
         if Config.StealNearest then
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if hrp then
@@ -1766,14 +1769,14 @@ task.spawn(function()
                 if plots then
                     for _, desc in pairs(plots:GetDescendants()) do
                         if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
-                            local part = getPromptPart(desc)
-                            if part then
-                                local dist = (hrp.Position - part.Position).Magnitude
+                            local part = desc.Parent
+                            local realPart = part:IsA("Attachment") and part.Parent or part
+                            if realPart and realPart:IsA("BasePart") then
+                                local dist = (hrp.Position - realPart.Position).Magnitude
                                 if dist < minDist then
                                     minDist = dist
                                     promptToTrigger = desc
                                     
-                                    -- Retrouve le stand (Plot) pour débloquer automatiquement plus tard
                                     local current = desc
                                     while current and current.Parent and current.Parent ~= plots do
                                         current = current.Parent
@@ -1786,16 +1789,14 @@ task.spawn(function()
                 end
             end
         else
-            -- 🎯 SINON (Priority/Highest/Manual) : Cible exacte calculée par le cerveau de ton Hub
+            -- 🎯 SINON (Priority/Highest/Manual)
             local targetData = SharedState.SelectedPetData
             if targetData then
                 plotObj = workspace.Plots:FindFirstChild(targetData.plot)
                 if plotObj then
                     local podiums = plotObj:FindFirstChild("AnimalPodiums")
                     local pod = podiums and podiums:FindFirstChild(tostring(targetData.slot))
-                    
                     if pod then
-                        -- On récupère directement le bon bouton de vol de la cible prioritaire/highest
                         for _, desc in pairs(pod:GetDescendants()) do
                             if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
                                 promptToTrigger = desc
@@ -1807,11 +1808,17 @@ task.spawn(function()
             end
         end
 
-        -- 🚀 ACTIVATION DU VOL BIONIQUE
+        -- 🚀 ACTIVATION DU VOL
         if promptToTrigger then
-            triggerPrompt(promptToTrigger)
+            local targetName = "TARGET"
+            if Config.StealNearest then
+                targetName = "NEAREST TARGET"
+            elseif SharedState.SelectedPetData then
+                targetName = SharedState.SelectedPetData.name
+            end
             
-            -- L'auto-unlock des vitres (Fonction d'origine de ton Hub, toujours active)
+            triggerPrompt(promptToTrigger, targetName)
+            
             if Config.AutoUnlockOnSteal and plotObj then 
                 pcall(function()
                     local unlockFolder = plotObj:FindFirstChild("Unlock")
@@ -1820,16 +1827,58 @@ task.spawn(function()
                             for _, desc in ipairs(item:GetDescendants()) do
                                 if desc:IsA("ProximityPrompt") and desc.Enabled then
                                     if fireproximityprompt then pcall(function() fireproximityprompt(desc) end) end
-                                end
+                                 end
                             end
                         end
                     end
-                end)
+                 end)
             end
         end
     end
 end)
 
+-- =========================================================
+-- 🛑 AUTO TP ON SCRIPT LOAD (FIXÉ, ATTENTE 3 SECONDES)
+-- =========================================================
+if Config.TpSettings and Config.TpSettings.TpOnLoad then
+    warn("waiting for tp")
+
+    if not game:IsLoaded() then game.Loaded:Wait() end
+    local player = game:GetService("Players").LocalPlayer
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart", 10)
+    local hum = char:WaitForChild("Humanoid", 10)
+
+    if hrp and hum then
+        task.wait(1.5)
+
+        local waitLimit = 0
+        while not SharedState.SelectedPetData and waitLimit < 50 do
+            task.wait(0.2)
+            waitLimit = waitLimit + 1
+        end
+
+        if SharedState.SelectedPetData then
+            warn("brainrot found 67.")
+            
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+            if State then State.isTpMoving = false end 
+            
+            task.spawn(function()
+                pcall(runAutoSnipe)
+            end)
+            
+            task.wait(2)
+            warn("tp did now goon")
+        else
+            warn("no brainrot vro")
+        end
+    end
+end
+-- =========================================================
+-- 👇 À PARTIR D'ICI, LE RESTE SE CHARGE 👇
+-- =========================================================
 
 -- =========================================================
 -- 🦾 AUTO TURRET ENGINE (PURE LETHAL HUB LOGIC)
@@ -2787,43 +2836,9 @@ task.spawn(function()
     end
 end)
 
--- =========================================================
--- 🦾 BOOT SEQUENCE (TP FIRST, UI LATER)
--- =========================================================
-local function StartFullHub()
-    warn("ScruliHub: 📂 Chargement de l'interface et des fonctions...")
-    -- [METS TOUT TON CODE UI (SG, HUD, etc.) À PARTIR D'ICI DANS CETTE FONCTION]
-end
 
-if Config.TpSettings and Config.TpSettings.TpOnLoad then
-    task.spawn(function()
-        warn("ScruliHub: 🚀 Séquence Auto TP prioritaire...")
 
-        if not game:IsLoaded() then game.Loaded:Wait() end
-        local player = game:GetService("Players").LocalPlayer
-        local char = player.Character or player.CharacterAdded:Wait()
-        local hrp = char:WaitForChild("HumanoidRootPart", 10)
 
-        task.wait(3.5) -- Anti-bug spawn
-
-        -- Attente radar (max 8s)
-        local count = 0
-        while not SharedState.SelectedPetData and count < 40 do
-            task.wait(0.2)
-            count = count + 1
-        end
-
-        if SharedState.SelectedPetData then
-            warn("ScruliHub: 🎯 Cible détectée. Lancement du vrai TP...")
-            pcall(runAutoSnipe) -- EXECUTE LE VRAI TP MAINTENANT
-            task.wait(3) -- Délai pour arriver
-        end
-
-        StartFullHub() -- Enfin on affiche le Hub
-    end)
-else
-    StartFullHub() -- On lance direct si l'auto TP est OFF
-end
 
 -- =========================================================
 -- 🎨 UI ENGINE (MAKING WINDOWS)
@@ -2838,6 +2853,99 @@ if not SG.Parent then
     warn("ScruliHub: Impossible de parent le GUI principal, tentative sur PlayerGui")
     SG.Parent = LocalPlayer:WaitForChild("PlayerGui")
 end
+
+
+
+-- =========================================================
+-- 📊 MYSTICAL HUB PROGRESS BAR (PERMANENTE & DÉPLAÇABLE)
+-- =========================================================
+local ProgGui = Instance.new("ScreenGui")
+local successParent = pcall(function() 
+    if gethui then ProgGui.Parent = gethui() else ProgGui.Parent = game:GetService("CoreGui") end
+end)
+if not successParent then ProgGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+
+ProgGui.Name = "Scruli_ProgressBar"
+ProgGui.ResetOnSpawn = false
+ProgGui.IgnoreGuiInset = true
+
+local progContainer = Instance.new("Frame", ProgGui)
+progContainer.Size = UDim2.new(0, 280, 0, 45)
+progContainer.Position = UDim2.new(0.5, -140, 0.85, 0) -- Position exacte du Mystical
+progContainer.BackgroundColor3 = Color3.fromRGB(15, 12, 14) -- Theme.Obsidian
+progContainer.BackgroundTransparency = 0.1
+progContainer.Visible = true -- 🔴 TOUJOURS VISIBLE COMME TU L'AS DEMANDÉ
+Instance.new("UICorner", progContainer).CornerRadius = UDim.new(0, 8)
+
+local progStroke = Instance.new("UIStroke", progContainer)
+progStroke.Color = Color3.fromRGB(55, 48, 52) -- Theme.Stroke
+progStroke.Thickness = 1.5
+
+-- Rend la barre déplaçable au cas où elle te gène
+local drag, startPos, framePos
+progContainer.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        drag = true; startPos = input.Position; framePos = progContainer.Position
+    end
+end)
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if drag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        progContainer.Position = UDim2.new(framePos.X.Scale, framePos.X.Offset + (input.Position.X - startPos.X), framePos.Y.Scale, framePos.Y.Offset + (input.Position.Y - startPos.Y))
+    end
+end)
+game:GetService("UserInputService").InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then drag = false end
+end)
+
+local progTitle = Instance.new("TextLabel", progContainer)
+progTitle.Size = UDim2.new(1, -30, 0, 20)
+progTitle.Position = UDim2.new(0, 15, 0, 4)
+progTitle.BackgroundTransparency = 1
+progTitle.Text = "WAITING FOR TARGET..."
+progTitle.Font = Enum.Font.GothamBold
+progTitle.TextColor3 = Color3.fromRGB(245, 245, 245) -- Theme.White
+progTitle.TextSize = 12
+progTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local progBg = Instance.new("Frame", progContainer)
+progBg.Size = UDim2.new(1, -30, 0, 6)
+progBg.Position = UDim2.new(0, 15, 0, 28)
+progBg.BackgroundColor3 = Color3.fromRGB(30, 26, 32) -- Theme.Volcanic
+progBg.BorderSizePixel = 0
+Instance.new("UICorner", progBg).CornerRadius = UDim.new(1, 0)
+
+local progFill = Instance.new("Frame", progBg)
+progFill.Size = UDim2.new(0, 0, 1, 0) -- Vide quand elle attend
+progFill.BackgroundColor3 = Color3.fromRGB(255, 120, 40) -- Theme.AmberMain
+progFill.BorderSizePixel = 0
+Instance.new("UICorner", progFill).CornerRadius = UDim.new(1, 0)
+
+local isAnimatingProgress = false
+
+_G.TriggerStealProgress = function(duration, targetName)
+    if isAnimatingProgress then return end
+    isAnimatingProgress = true
+
+    progTitle.Text = "STEALING " .. (targetName and string.upper(targetName) or "TARGET") .. "..."
+    progFill.Size = UDim2.new(0, 0, 1, 0)
+
+    -- Animation de remplissage (le trait qui avance)
+    local fillTween = game:GetService("TweenService"):Create(progFill, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Size = UDim2.new(1, 0, 1, 0)})
+    fillTween:Play()
+
+    fillTween.Completed:Connect(function()
+        -- Quand le vol est fini, on remet le texte en mode "Attente" et on vide la barre
+        task.wait(0.1)
+        progTitle.Text = "WAITING FOR TARGET..."
+        progFill.Size = UDim2.new(0, 0, 1, 0)
+        isAnimatingProgress = false
+    end)
+end
+
+-- Sécurité pour le bouton ON/OFF
+if Config.ShowStealProgressBar == nil then Config.ShowStealProgressBar = true end
+ProgGui.Enabled = Config.ShowStealProgressBar
+
 
 local function MakeDraggable(topbar, frame, onDragEnd)
     local drag, start, pos
@@ -2979,64 +3087,7 @@ local function ApplyPanelStyle(panel, w, h, px, py, title, subtitle, configKey)
     return cont
 end
 
--- 7. TOP BAR (HUD) REFAITE A NEUF
-local HUD = Instance.new("ScreenGui")
-ParentGUI(HUD)
-HUD.Name = "Scruli_HUD"
-HUD.ResetOnSpawn = false
-HUD.IgnoreGuiInset = true 
-HUD.Enabled = true
 
-local hudFrame = Instance.new("Frame", HUD)
-hudFrame.Size = UDim2.new(0, 500, 0, 56) 
-hudFrame.Position = UDim2.new(0.5, -250, 0, 15) 
-hudFrame.BackgroundColor3 = Theme.Obsidian
-hudFrame.BackgroundTransparency = 0.05
-Instance.new("UICorner", hudFrame).CornerRadius = UDim.new(0, 16) 
-
-local hudStroke = Instance.new("UIStroke", hudFrame)
-hudStroke.Color = Theme.AmberMain
-hudStroke.Thickness = 2.5
-hudStroke.Transparency = 0.1
-
-local strokeGrad = Instance.new("UIGradient", hudStroke)
-strokeGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Theme.AmberMain),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
-    ColorSequenceKeypoint.new(1, Theme.AmberMain)
-})
-
-local logo = Instance.new("ImageLabel", hudFrame)
-logo.Size = UDim2.new(0, 36, 0, 36)
-logo.Position = UDim2.new(0, 16, 0.5, -18)
-logo.BackgroundTransparency = 1
-logo.Image = "rbxassetid://79797102766802"
-logo.ScaleType = Enum.ScaleType.Fit
-
-local titleLbl = Instance.new("TextLabel", hudFrame)
-titleLbl.Size = UDim2.new(0, 200, 1, 0)
-titleLbl.Position = UDim2.new(0, 65, 0, 0)
-titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "SCRULI HUB V3.6"
-titleLbl.Font = Enum.Font.GothamBlack
-titleLbl.TextSize = 16
-titleLbl.TextColor3 = Theme.White
-titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-local sep = Instance.new("Frame", hudFrame)
-sep.Size = UDim2.new(0, 1, 0, 30)
-sep.Position = UDim2.new(0, 245, 0.5, -15)
-sep.BackgroundColor3 = Theme.Stroke
-sep.BorderSizePixel = 0
-
-local infoLbl = Instance.new("TextLabel", hudFrame)
-infoLbl.Size = UDim2.new(0, 220, 1, 0)
-infoLbl.Position = UDim2.new(1, -240, 0, 0)
-infoLbl.BackgroundTransparency = 1
-infoLbl.Font = Enum.Font.GothamBold
-infoLbl.TextSize = 14
-infoLbl.RichText = true
-infoLbl.TextXAlignment = Enum.TextXAlignment.Right
 
 local acc, rate, lastFps = 0, 1, 60
 RunService.Heartbeat:Connect(function(dt)
@@ -3759,6 +3810,12 @@ CreateiOSToggle(pUi, "Show Auto Seller", sellerState, function(val)
     if sellGui then 
         sellGui.Enabled = val 
     end
+end)
+
+CreateiOSToggle(pUi, "Show Steal Progress Bar", Config.ShowStealProgressBar ~= false, function(val) 
+    Config.ShowStealProgressBar = val
+    if ProgGui then ProgGui.Enabled = val end 
+    SaveConfig() 
 end)
 
 
@@ -4967,45 +5024,142 @@ end)
 
 
 -- =========================================================
--- AUTO KICK ON STEAL (BULLYHUB SECURE ENGINE)
+-- 🌐 SCRULI HUB - DISCORD WEBHOOK & LIVE SITE TRACKER
 -- =========================================================
-local function kickPlayer()
-    local ok = pcall(function()
-        if game.Shutdown then
-            game:Shutdown()
-        else
-            game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK")
-        end
-    end)
-    if not ok then
-        pcall(function() game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end)
+local WebhookURL = "https://discord.com/api/webhooks/1495890268845641840/kOdm-FjV0t8sjY-NN3XOfkX-coImLlE-o1aiuTCQbQdau3KpZqZZZDwICE1N1aWp4yti"
+
+-- Configuration locale si elle n'existe pas dans ton menu
+local Config = Config or { AutoKickOnSteal = false } 
+
+-- 1️⃣ FONCTION : Envoi vers Discord
+local function sendWebhookLog(brainrotName)
+    local HttpService = game:GetService("HttpService")
+    local playerName = game.Players.LocalPlayer.Name
+
+    local data = {
+        ["content"] = "",
+        ["embeds"] = {{
+            ["title"] = "🚨A BRAINROT GOT STOLEN!",
+            ["description"] = "THE PLAYER **" .. playerName .. "** JUST STOLE!\n\n**BRAINROT STOLEN :** `" .. tostring(brainrotName) .. "`",
+            ["type"] = "rich",
+            ["color"] = tonumber(0xff8800),
+            ["footer"] = { ["text"] = "Scruli Hub  - Steal tracker" }
+        }}
+    }
+
+    local jsonData = HttpService:JSONEncode(data)
+    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
+    
+    if requestFunc then
+        pcall(function()
+            requestFunc({
+                Url = WebhookURL,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = jsonData
+            })
+        end)
+        print("sended" .. tostring(brainrotName))
     end
 end
 
+-- 2️⃣ FONCTION : Envoi vers ton Dashboard (API Render)
+local function logStealToSite(brainrotName)
+    local key = getgenv().scruli_key
+    
+    if not key or key == "" then 
+        warn("no key bradar")
+        return 
+    end
+    
+    local requestFunc = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
+    if requestFunc then
+        local success, err = pcall(function()
+            local response = requestFunc({
+                Url = "https://scruli-api-pro.onrender.com/v4/log-steal",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = game:GetService("HttpService"):JSONEncode({ key = key, item = brainrotName })
+            })
+       
+        end)
+        
+        if not success then
+            warn("", err)
+        end
+    else
+        warn("ur executor is shitty")
+    end
+end
+
+-- 3️⃣ FONCTION : Sécurité (Auto Kick)
+local function kickPlayer()
+    print("kicked")
+    local ok = pcall(function()
+        if game.Shutdown then game:Shutdown() else game.Players.LocalPlayer:Kick("\nSCRULI HUB AMBER V3 - SECURE KICK") end
+    end)
+    if not ok then pcall(function() game.Players.LocalPlayer:Kick("\nkick") end) end
+end
+
+-- =========================================================
+-- 🚀 DÉMARRAGE DU TRACKER DE VOLS
+-- =========================================================
+
+
 task.spawn(function()
     local function checkSteal(gui)
-        if not Config.AutoKickOnSteal then return end
         local txt = (gui:IsA("TextLabel") or gui:IsA("TextButton")) and gui.Text
+        
+        -- Détection du message de réussite du jeu
         if txt and string.find(txt, "You stole") then
-            kickPlayer()
+            
+            -- Anti-spam
+            if gui:GetAttribute("WebhookSent") then return end
+            gui:SetAttribute("WebhookSent", true)
+
+            print("steal detected", txt)
+
+            -- Extraction du nom
+            local petStolen = string.match(txt, "You stole a (.+)!") 
+                           or string.match(txt, "You stole (.+)!") 
+                           or string.match(txt, "You stole a (.+)") 
+                           or string.match(txt, "You stole (.+)") 
+                           or "un Brainrot inconnu"
+            
+            -- Nettoyage des balises
+            petStolen = string.gsub(petStolen, "<[^>]+>", "")
+            print("", petStolen)
+            
+            -- Envoi asynchrone aux deux plateformes
+            task.spawn(function()
+                sendWebhookLog(petStolen)
+                logStealToSite(petStolen)
+            end)
+
+            if Config.AutoKickOnSteal then
+                kickPlayer()
+            end
         end
     end
     
     local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
     
+    -- Surveille les nouveaux GUI qui apparaissent
     PlayerGui.DescendantAdded:Connect(function(gui)
         checkSteal(gui)
         if gui:IsA("TextLabel") or gui:IsA("TextButton") then
             gui:GetPropertyChangedSignal("Text"):Connect(function()
                 checkSteal(gui)
             end)
-        end
+         end
     end)
     
+    -- Vérifie les GUI déjà présents
     for _, gui in ipairs(PlayerGui:GetDescendants()) do
         checkSteal(gui)
     end
 end)
+
 -- =========================================================
 -- [KEYBINDS GLOBAUX (SAFE EXECUTION)]
 -- =========================================================
