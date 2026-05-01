@@ -1886,11 +1886,11 @@ if Config.TpSettings and Config.TpSettings.TpOnLoad then
 
     if hrp and hum then
         -- Laisse 3 secondes au Scheduler pour scanner la map
-        task.wait(3)
+        task.wait(0.3)
 
         local waitLimit = 0
         while not SharedState.SelectedPetData and waitLimit < 20 do
-            task.wait(0.2)
+            task.wait(0.1)
             waitLimit = waitLimit + 1
         end
 
@@ -1904,7 +1904,7 @@ if Config.TpSettings and Config.TpSettings.TpOnLoad then
             pcall(runAutoSnipe)
             
             -- Attendre que le TP finisse avant de charger le UI
-            task.wait(2)
+            task.wait(3)
             warn("tp did now goon")
         else
             warn("no brainrot vro")
@@ -2861,95 +2861,6 @@ SG.IgnoreGuiInset = true
 if not SG.Parent then
     warn("ScruliHub: Impossible de parent le GUI principal, tentative sur PlayerGui")
     SG.Parent = LocalPlayer:WaitForChild("PlayerGui")
-end
-
--- =========================================================
--- 🎛️ HUD BAR (SCRULI HUB TOP BAR)
--- =========================================================
-do
-    local HUD = Instance.new("ScreenGui")
-    ParentGUI(HUD)
-    HUD.Name = "Scruli_HUD"
-    HUD.ResetOnSpawn = false
-    HUD.IgnoreGuiInset = true
-    HUD.Enabled = true
-
-    local hudFrame = Instance.new("Frame", HUD)
-    hudFrame.Size = UDim2.new(0, 500, 0, 56)
-    hudFrame.Position = UDim2.new(0.5, -250, 0, 15)
-    hudFrame.BackgroundColor3 = Theme.Obsidian
-    hudFrame.BackgroundTransparency = 0.05
-    Instance.new("UICorner", hudFrame).CornerRadius = UDim.new(0, 16)
-
-    local hudStroke = Instance.new("UIStroke", hudFrame)
-    hudStroke.Color = Theme.AmberMain
-    hudStroke.Thickness = 2.5
-    hudStroke.Transparency = 0.1
-
-    local strokeGrad = Instance.new("UIGradient", hudStroke)
-    strokeGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.AmberMain),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 255, 255)),
-        ColorSequenceKeypoint.new(1, Theme.AmberMain)
-    })
-
-    local hudLogo = Instance.new("ImageLabel", hudFrame)
-    hudLogo.Size = UDim2.new(0, 36, 0, 36)
-    hudLogo.Position = UDim2.new(0, 16, 0.5, -18)
-    hudLogo.BackgroundTransparency = 1
-    hudLogo.Image = "rbxassetid://79797102766802"
-    hudLogo.ScaleType = Enum.ScaleType.Fit
-
-    local hudTitleLbl = Instance.new("TextLabel", hudFrame)
-    hudTitleLbl.Size = UDim2.new(0, 200, 1, 0)
-    hudTitleLbl.Position = UDim2.new(0, 65, 0, 4)
-    hudTitleLbl.BackgroundTransparency = 1
-    hudTitleLbl.Text = "SCRULI HUB V3.6"
-    hudTitleLbl.Font = Enum.Font.GothamBlack
-    hudTitleLbl.TextSize = 14
-    hudTitleLbl.TextColor3 = Theme.White
-    hudTitleLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    local hudCreditsLbl = Instance.new("TextLabel", hudFrame)
-    hudCreditsLbl.Size = UDim2.new(0, 200, 0, 14)
-    hudCreditsLbl.Position = UDim2.new(0, 65, 0, 26)
-    hudCreditsLbl.BackgroundTransparency = 1
-    hudCreditsLbl.Text = "fort_guys123  -  gyatt_boxed"
-    hudCreditsLbl.Font = Enum.Font.GothamMedium
-    hudCreditsLbl.TextSize = 10
-    hudCreditsLbl.TextColor3 = Theme.Ash
-    hudCreditsLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    local hudSep = Instance.new("Frame", hudFrame)
-    hudSep.Size = UDim2.new(0, 1, 0, 30)
-    hudSep.Position = UDim2.new(0, 245, 0.5, -15)
-    hudSep.BackgroundColor3 = Theme.Stroke
-    hudSep.BorderSizePixel = 0
-
-    local hudInfoLbl = Instance.new("TextLabel", hudFrame)
-    hudInfoLbl.Size = UDim2.new(0, 220, 1, 0)
-    hudInfoLbl.Position = UDim2.new(1, -240, 0, 0)
-    hudInfoLbl.BackgroundTransparency = 1
-    hudInfoLbl.Font = Enum.Font.GothamBold
-    hudInfoLbl.TextSize = 14
-    hudInfoLbl.RichText = true
-    hudInfoLbl.TextXAlignment = Enum.TextXAlignment.Right
-
-    local acc, rate, lastFps = 0, 1, 60
-    RunService.Heartbeat:Connect(function(dt)
-        acc = acc + dt
-        if acc >= rate then
-            lastFps = math.floor(1 / dt)
-            acc = 0
-        end
-        local ping = math.floor(LocalPlayer:GetNetworkPing() * 1000)
-        local fc = (lastFps >= 50) and "rgb(46,204,113)" or (lastFps >= 30) and "rgb(255,200,0)" or "rgb(255,70,70)"
-        local pc = (ping < 100) and "rgb(46,204,113)" or (ping < 200) and "rgb(255,200,0)" or "rgb(255,70,70)"
-        hudInfoLbl.Text = string.format(
-            "<font color='rgb(160,160,160)'>FPS:</font> <font color='%s'>%d</font>   |   <font color='rgb(160,160,160)'>PING:</font> <font color='%s'>%d</font>",
-            fc, lastFps, pc, ping
-        )
-    end)
 end
 
 
