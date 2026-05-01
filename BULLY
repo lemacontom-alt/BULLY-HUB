@@ -775,6 +775,13 @@ local function cleanRagdollV2(char)
     end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then
+        hum.PlatformStand = false
+        hum.Sit = false
+        pcall(function()
+            hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        end)
+        
         local animator = hum:FindFirstChild("Animator")
         if animator then
             for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
@@ -1542,33 +1549,40 @@ runAutoSnipe = function()
                 
                 if not char.Parent or not hrp.Parent then return end
                 
-                -- 2. Propulsion du saut
+                -- 2. Propulsion du saut (AVEC JUMP POWER POUR BYPASS ANTI-CHEAT)
                 hrp.CFrame = CFrame.new(hrp.Position) * facingRot
-                local v = hrp.AssemblyLinearVelocity
-                hrp.AssemblyLinearVelocity = Vector3.new(v.X, 200, v.Z)
-                task.wait(0.08)
+                if hum then
+                    hum.UseJumpPower = true
+                    hum.JumpPower = Config.TpSettings.JumpHeight or 60
+                    hum.Jump = true
+                end
+                task.wait(0.1) -- Attend que le serveur enregistre l'état "Jumping"
                 
                 if not char.Parent or not hrp.Parent then return end
                 
-                -- 3. Glissade en l'air (sans dépendre d'un modèle sur la map)
+                -- 3. Glissade en l'air (Tween pour esquiver l'anti-TP sec)
                 if hum and hum.Parent then
                     hum:ChangeState(Enum.HumanoidStateType.Jumping)
-                    task.wait(0.02)
                 end
                 
-                if not char.Parent or not hrp.Parent then return end
-                
                 local positionBehindPet = targetPosition + (dirBehind * 18)
-                local safeAirPos = Vector3.new(positionBehindPet.X, hrp.Position.Y, positionBehindPet.Z)
-                hrp.CFrame = CFrame.new(safeAirPos) * facingRot
-                task.wait(0.12)
+                local safeAirPos = Vector3.new(positionBehindPet.X, hrp.Position.Y + 5, positionBehindPet.Z)
+                
+                -- Utilisation d'un Tween ultra rapide au lieu d'un CFrame sec pour bypass le rollback
+                local ts = game:GetService("TweenService")
+                local ti = TweenInfo.new(0.15, Enum.EasingStyle.Linear)
+                local tween = ts:Create(hrp, ti, {CFrame = CFrame.new(safeAirPos) * facingRot})
+                tween:Play()
+                tween.Completed:Wait()
                 
                 if not char.Parent or not hrp.Parent then return end
                 
-                -- 4. Atterrissage derrière
+                -- 4. Atterrissage en douceur
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 hrp.AssemblyAngularVelocity = Vector3.zero
-                hrp.CFrame = CFrame.new(finalPos) * facingRot
+                local dropTween = ts:Create(hrp, TweenInfo.new(0.05, Enum.EasingStyle.Linear), {CFrame = CFrame.new(finalPos) * facingRot})
+                dropTween:Play()
+                dropTween.Completed:Wait()
             end
             
             task.wait(0.06)
@@ -1886,11 +1900,11 @@ if Config.TpSettings and Config.TpSettings.TpOnLoad then
 
     if hrp and hum then
         -- Laisse 3 secondes au Scheduler pour scanner la map
-        task.wait(0.3)
+        task.wait(0.4)
 
         local waitLimit = 0
         while not SharedState.SelectedPetData and waitLimit < 20 do
-            task.wait(0.1)
+            task.wait(0.3)
             waitLimit = waitLimit + 1
         end
 
@@ -2904,7 +2918,7 @@ do
     hudTitleLbl.Size = UDim2.new(0, 200, 0, 20)
     hudTitleLbl.Position = UDim2.new(0, 65, 0, 10)
     hudTitleLbl.BackgroundTransparency = 1
-    hudTitleLbl.Text = "SCRULI HUB V3.8"
+    hudTitleLbl.Text = "SCRULI HUB V3.6"
     hudTitleLbl.Font = Enum.Font.GothamBlack
     hudTitleLbl.TextSize = 14
     hudTitleLbl.TextColor3 = Theme.White
