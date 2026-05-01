@@ -33,7 +33,67 @@ local AnimalsData = require(Datas:WaitForChild("Animals"))
 local AnimalsShared = require(Shared:WaitForChild("Animals"))
 local NumberUtils = require(Utils:WaitForChild("NumberUtils"))
 
+-- =========================================================
+-- [MASTER SCHEDULER - ANTI-CHEAT CORE]
+-- Un seul Heartbeat:Connect pour tout. Jitter aléatoire.
+-- =========================================================
+local Scheduler = {}
+Scheduler._tasks = {}
+Scheduler._conn = nil
 
+function Scheduler:Add(id, interval, jitter, callback)
+    self._tasks[id] = {
+        interval = interval,
+        jitter = jitter or 0,
+        callback = callback,
+        nextRun = tick() + (math.random() * interval),
+        enabled = true
+    }
+end
+
+function Scheduler:Remove(id)
+    self._tasks[id] = nil
+end
+
+function Scheduler:SetEnabled(id, state)
+    if self._tasks[id] then self._tasks[id].enabled = state end
+end
+
+function Scheduler:IsEnabled(id)
+    return self._tasks[id] and self._tasks[id].enabled or false
+end
+
+function Scheduler:Start()
+    if self._conn then return end
+    self._conn = RunService.Heartbeat:Connect(function(dt)
+        local now = tick()
+        for id, t in pairs(self._tasks) do
+            if t.enabled and now >= t.nextRun then
+                t.nextRun = now + t.interval + (math.random() * t.jitter * 2 - t.jitter)
+                pcall(t.callback, dt)
+            end
+        end
+    end)
+end
+
+-- Démarrer le Scheduler immédiatement pour que les tâches de fond s'activent
+Scheduler:Start()
+
+-- Sentry cache event-driven (pas de GetDescendants en boucle)
+local _sentryCache = {}
+task.defer(function()
+    for _, inst in ipairs(Workspace:GetDescendants()) do
+        if typeof(inst) == "Instance" and inst.Name:match("^Sentry_") then
+            _sentryCache[inst] = true
+        end
+    end
+    Workspace.DescendantAdded:Connect(function(inst)
+        if inst.Name:match("^Sentry_") then _sentryCache[inst] = true end
+    end)
+    Workspace.DescendantRemoving:Connect(function(inst)
+        _sentryCache[inst] = nil
+    end)
+end)
 
 -- =========================================================
 -- [SAFE GUI CONTAINER & ANTI-DUPLICATION]
@@ -461,59 +521,55 @@ do
     -- NOUVEAU : Mémoire par BASE/JOUEUR (pour ne donner que le meilleur)
     local announcedOwners = {}
 
-    task.spawn(function()
-        while true do
-            task.wait(1)
-            pcall(function()
-                if not hasShownPriorityAlert and Config.AlertsEnabled and #SharedState.AllAnimalsCache > 0 then
-                    local bestPetToAlert = nil
-                    local bestRankFound = math.huge
-                    
-                    for _, pet in ipairs(SharedState.AllAnimalsCache) do
-                        if pet.owner ~= LocalPlayer.Name then
-                            -- On cherche le rang du pet dans la PRIORITY_LIST (1 = le meilleur)
-                            local rank = math.huge
-                            for i, pName in ipairs(PRIORITY_LIST) do
-                                if pet.name and pet.name:lower() == pName:lower() then
-                                    rank = i
-                                    break
-                                end
-                            end
-                            
-                            -- Si c'est un pet rare de la liste
-                            if rank < math.huge then
-                                local previousRank = announcedOwners[pet.owner] or math.huge
-                                -- On n'alerte QUE si ce pet est MEILLEUR que ce qu'on a déjà vu chez ce joueur
-                                if rank < previousRank then
-                                    if rank < bestRankFound then
-                                        bestRankFound = rank
-                                        bestPetToAlert = pet
-                                    end
-                                end
+    Scheduler:Add("priority_alert_loop", 1, 0, function()
+        pcall(function()
+            if not hasShownPriorityAlert and Config.AlertsEnabled and #SharedState.AllAnimalsCache > 0 then
+                local bestPetToAlert = nil
+                local bestRankFound = math.huge
+                
+                for _, pet in ipairs(SharedState.AllAnimalsCache) do
+                    if pet.owner ~= LocalPlayer.Name then
+                        -- On cherche le rang du pet dans la PRIORITY_LIST (1 = le meilleur)
+                        local rank = math.huge
+                        for i, pName in ipairs(PRIORITY_LIST) do
+                            if pet.name and pet.name:lower() == pName:lower() then
+                                rank = i
+                                break
                             end
                         end
-                    end
-                    
-                    if bestPetToAlert then
-                        -- On enregistre le meilleur rang vu pour ce joueur pour ignorer les pets moins rares
-                        announcedOwners[bestPetToAlert.owner] = bestRankFound
-                        ShowPriorityAlert(bestPetToAlert.name, bestPetToAlert.genText, bestPetToAlert.mutation, bestPetToAlert.owner)
-                        task.wait(8)
-                    end
-                    
-                    -- Nettoyage de la mémoire : si le joueur quitte la partie, on l'oublie
-                    local currentOwners = {}
-                    for _, pet in ipairs(SharedState.AllAnimalsCache) do
-                        currentOwners[pet.owner] = true
-                    end
-                    for owner, _ in pairs(announcedOwners) do
-                        if not currentOwners[owner] then
-                            announcedOwners[owner] = nil
+                        
+                        -- Si c'est un pet rare de la liste
+                        if rank < math.huge then
+                            local previousRank = announcedOwners[pet.owner] or math.huge
+                            -- On n'alerte QUE si ce pet est MEILLEUR que ce qu'on a déjà vu chez ce joueur
+                            if rank < previousRank then
+                                if rank < bestRankFound then
+                                    bestRankFound = rank
+                                    bestPetToAlert = pet
+                                end
+                            end
                         end
                     end
                 end
-            end)
-        end
+                
+                if bestPetToAlert then
+                    -- On enregistre le meilleur rang vu pour ce joueur pour ignorer les pets moins rares
+                    announcedOwners[bestPetToAlert.owner] = bestRankFound
+                    ShowPriorityAlert(bestPetToAlert.name, bestPetToAlert.genText, bestPetToAlert.mutation, bestPetToAlert.owner)
+                end
+                
+                -- Nettoyage de la mémoire : si le joueur quitte la partie, on l'oublie
+                local currentOwners = {}
+                for _, pet in ipairs(SharedState.AllAnimalsCache) do
+                    currentOwners[pet.owner] = true
+                end
+                for owner, _ in pairs(announcedOwners) do
+                    if not currentOwners[owner] then
+                        announcedOwners[owner] = nil
+                    end
+                end
+            end
+        end)
     end)
 end
 
@@ -625,14 +681,13 @@ _G.setInfiniteJump = function(state)
     end
 end
 
--- 2. CARPET SPEED (Version avancée avec Vélocité)
+-- 2. CARPET SPEED (Via Scheduler au lieu de Heartbeat séparé)
 local carpetSpeedConn
 _G.setCarpetSpeed = function(state)
     MiscState.carpetSpeedEnabled = state
-    if carpetSpeedConn then carpetSpeedConn:Disconnect(); carpetSpeedConn = nil end
     
     if state then
-        carpetSpeedConn = RunService.Heartbeat:Connect(function()
+        Scheduler:Add("carpet_speed", 0.016, 0.004, function()
             local c = LocalPlayer.Character
             if not c then return end
             local hum = c:FindFirstChild("Humanoid")
@@ -661,6 +716,7 @@ _G.setCarpetSpeed = function(state)
             end
         end)
     else
+        Scheduler:Remove("carpet_speed")
         local char = LocalPlayer.Character
         if char then
             local hum = char:FindFirstChildOfClass("Humanoid")
@@ -847,129 +903,119 @@ local fovConn
 _G.updateFOV = function(val)
     if fovConn then fovConn:Disconnect(); fovConn = nil end
     
-    -- Méthode robuste compatible Mobile
-    fovConn = RunService.Heartbeat:Connect(function()
-        if Workspace.CurrentCamera then
-            Workspace.CurrentCamera.FieldOfView = val
-        end
-    end)
-    -- Force l'application immédiate
-    if Workspace.CurrentCamera then Workspace.CurrentCamera.FieldOfView = val end
+    -- PropertyChangedSignal au lieu de Heartbeat (0 CPU quand idle)
+    if Workspace.CurrentCamera then
+        Workspace.CurrentCamera.FieldOfView = val
+        fovConn = Workspace.CurrentCamera:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+            if Config.FOV and Workspace.CurrentCamera.FieldOfView ~= Config.FOV then
+                Workspace.CurrentCamera.FieldOfView = Config.FOV
+            end
+        end)
+    end
 end
 
 _G.ANTI_BEE_DISCO = {
     Enable = function()
         if _G.AntiBeeLoopConn then return end
 
-        local RunService = game:GetService("RunService")
         local Lighting = game:GetService("Lighting")
         local LocalPlayer = game:GetService("Players").LocalPlayer
+        local _cachedPlayerModule = nil
 
         local function purge(obj)
-            -- 🛡️ LA CORRECTION EST ICI : On ignore totalement les armes/outils !
-            -- Si l'objet est un "Tool" (dans ton inventaire ou ta main), on ne le détruit PAS.
-            if obj:IsA("Tool") or (obj.Parent and obj.Parent:IsA("Tool")) then 
-                return 
-            end
-
+            if not obj or not obj.Parent then return end
+            if obj:IsA("Tool") or (obj.Parent and obj.Parent:IsA("Tool")) then return end
             local n = obj.Name:lower()
-            -- Destruction des effets trolls (mais pas des objets de ton inventaire)
             if n:match("bee") or n:match("disco") or n:match("boogie") or n:match("shake") then
                 pcall(function() obj:Destroy() end)
             end
-            -- Destruction des musiques
             if obj:IsA("Sound") and (n:match("disco") or n:match("music") or n:match("party") or n:match("bee") or n:match("boogie")) then
                 pcall(function() obj:Stop(); obj:Destroy() end)
             end
         end
 
-        -- Nettoyage initial sur la map
+        -- Nettoyage initial UNE SEULE FOIS
         for _, v in ipairs(workspace:GetDescendants()) do purge(v) end
 
-        -- Boucle de protection Ultime (Anti-Tout, mais respecte ton inventaire)
-        _G.AntiBeeLoopConn = RunService.RenderStepped:Connect(function()
-            
-            -- 3. PROTECTION DU PERSONNAGE
+        -- Event-driven : purge en temps réel quand un objet est ajouté (ZERO CPU en idle)
+        local conn1 = Workspace.DescendantAdded:Connect(function(v) purge(v) end)
+        local conn2 = Lighting.ChildAdded:Connect(function(v)
+            local nl = v.Name:lower()
+            if v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect") or nl:match("bee") or nl:match("disco") or nl:match("boogie") then
+                pcall(function() v:Destroy() end)
+            end
+        end)
+
+        -- Cache le PlayerModule une fois (pas require() chaque frame)
+        pcall(function()
+            _cachedPlayerModule = require(LocalPlayer.PlayerScripts:WaitForChild("PlayerModule"))
+        end)
+
+        -- Scan léger périodique via Scheduler (pas RenderStepped)
+        Scheduler:Add("anti_bee_disco", 0.15, 0.05, function()
             local char = LocalPlayer.Character
-            if char then
-                for _, v in ipairs(char:GetDescendants()) do purge(v) end
-                
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum then
-                    -- Anti-Tremblement
-                    if hum.CameraOffset.Magnitude > 0 then
-                        hum.CameraOffset = Vector3.new(0, 0, 0)
+            if not char then return end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if not hum then return end
+
+            if hum.CameraOffset.Magnitude > 0 then hum.CameraOffset = Vector3.new(0, 0, 0) end
+            if hum.WalkSpeed < 0 then hum.WalkSpeed = math.abs(hum.WalkSpeed) end
+
+            if _cachedPlayerModule then
+                pcall(function()
+                    local Controls = _cachedPlayerModule:GetControls()
+                    local moveVector = Controls:GetMoveVector()
+                    if moveVector.Magnitude > 0 then
+                        local cam = workspace.CurrentCamera
+                        local lookVector = cam.CFrame.LookVector
+                        local rightVector = cam.CFrame.RightVector
+                        local forward = Vector3.new(lookVector.X, 0, lookVector.Z).Unit
+                        local right = Vector3.new(rightVector.X, 0, rightVector.Z).Unit
+                        local trueDirection = (forward * -moveVector.Z) + (right * moveVector.X)
+                        hum:Move(trueDirection, false)
                     end
+                end)
+            end
 
-                    -- Anti-Inversion Vitesse
-                    if hum.WalkSpeed < 0 then hum.WalkSpeed = math.abs(hum.WalkSpeed) end
-                    
-                    -- Anti-Inversion Z=S absolue
-                    local success, PlayerModule = pcall(function()
-                        return require(LocalPlayer.PlayerScripts:WaitForChild("PlayerModule"))
-                    end)
-                    
-                    if success and PlayerModule then
-                        local Controls = PlayerModule:GetControls()
-                        local moveVector = Controls:GetMoveVector()
-
-                        if moveVector.Magnitude > 0 then
-                            local cam = workspace.CurrentCamera
-                            local lookVector = cam.CFrame.LookVector
-                            local rightVector = cam.CFrame.RightVector
-                            
-                            local forward = Vector3.new(lookVector.X, 0, lookVector.Z).Unit
-                            local right = Vector3.new(rightVector.X, 0, rightVector.Z).Unit
-                            
-                            local trueDirection = (forward * -moveVector.Z) + (right * moveVector.X)
-                            hum:Move(trueDirection, false)
-                        end
-                    end
-
-                    -- Anti-Danse (Bloque l'emote de la bombe que tu subis)
-                    local animator = hum:FindFirstChildOfClass("Animator")
-                    if animator then
-                        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                            local animName = track.Animation and track.Animation.Name:lower() or ""
-                            if animName:match("disco") or animName:match("dance") or animName:match("boogie") then
-                                track:Stop(0) 
-                            end
-                        end
+            local animator = hum:FindFirstChildOfClass("Animator")
+            if animator then
+                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                    local animName = track.Animation and track.Animation.Name:lower() or ""
+                    if animName:match("disco") or animName:match("dance") or animName:match("boogie") then
+                        track:Stop(0)
                     end
                 end
             end
 
-            -- 4. PROTECTION CAMÉRA (Anti-FOV et Anti-Flou)
             local cam = workspace.CurrentCamera
             if cam then
-                -- Utilise la FOV de tes paramètres (Config.FOV)
                 local targetFOV = Config.FOV or 70
-                if math.abs(cam.FieldOfView - targetFOV) > 0.5 then 
-                    cam.FieldOfView = targetFOV 
-                end
-                
-                -- Détruit les effets d'aveuglement sur la caméra
+                if math.abs(cam.FieldOfView - targetFOV) > 0.5 then cam.FieldOfView = targetFOV end
                 for _, v in ipairs(cam:GetChildren()) do
-                    if v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect") or v:IsA("DepthOfFieldEffect") then 
-                        pcall(function() v:Destroy() end) 
+                    if v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect") or v:IsA("DepthOfFieldEffect") then
+                        pcall(function() v:Destroy() end)
                     end
                 end
             end
-            
-            -- Détruit les effets d'aveuglement dans le monde
+
             for _, v in ipairs(Lighting:GetChildren()) do
-                if v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect") or v.Name:lower():match("bee") or v.Name:lower():match("disco") or v.Name:lower():match("boogie") then 
-                    pcall(function() v:Destroy() end) 
+                local nl = v.Name:lower()
+                if v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect") or nl:match("bee") or nl:match("disco") or nl:match("boogie") then
+                    pcall(function() v:Destroy() end)
                 end
             end
         end)
+
+        _G.AntiBeeLoopConn = {conn1 = conn1, conn2 = conn2}
     end,
     
     Disable = function()
         if _G.AntiBeeLoopConn then 
-            _G.AntiBeeLoopConn:Disconnect()
-            _G.AntiBeeLoopConn = nil 
+            if _G.AntiBeeLoopConn.conn1 then pcall(function() _G.AntiBeeLoopConn.conn1:Disconnect() end) end
+            if _G.AntiBeeLoopConn.conn2 then pcall(function() _G.AntiBeeLoopConn.conn2:Disconnect() end) end
+            _G.AntiBeeLoopConn = nil
         end
+        Scheduler:SetEnabled("anti_bee_disco", false)
     end
 }
 
@@ -1375,9 +1421,9 @@ runAutoSnipe = function()
             -- 🧠 CALCUL MATHÉMATIQUE : À EXACTEMENT 20 STUDS DE TA BASE
             local dir = targetBasePos - startPos
             local interPos = startPos
-            if dir.Magnitude > 20 then
+            if dir.Magnitude > 30 then
                 -- On ajoute 20 studs dans la direction de la base cible
-                interPos = startPos + (dir.Unit * 20)
+                interPos = startPos + (dir.Unit * 30)
             end
             
             -- TP À 20 STUDS (Garde la même hauteur Y que ton sol d'origine)
@@ -1675,164 +1721,153 @@ end)
 -- 🧠 CORE AUTO-STEAL ENGINE (SEPARATED NEAREST & TARGET)
 -- =========================================================
 
--- 1. LE TARGET SELECTOR (Définit la cible H24)
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            local pets = SharedState.AllAnimalsCache or {}
-            if #pets > 0 then
-                local bestIndex = 1
-                
-                if Config.ManualTargetUID then
-                    local found = false
-                    for i, p in ipairs(pets) do
-                        if p.uid == Config.ManualTargetUID then bestIndex = i; found = true; break end
-                    end
-                    if not found then Config.ManualTargetUID = nil end
-                end
+-- Méthode de vol ultra-rapide (Bypass) - définie hors boucle
+local function triggerPrompt(prompt, petName)
+    if not prompt or not prompt:IsDescendantOf(workspace) then return end
 
-                if not Config.ManualTargetUID then
-                    if Config.StealPriority then
-                        local foundPrioIndex = nil
-                        for _, pName in ipairs(PRIORITY_LIST) do
-                            local searchName = pName:lower()
-                            for i, p in ipairs(pets) do 
-                                if p.name and p.name:lower() == searchName then foundPrioIndex = i; break end 
-                            end
-                            if foundPrioIndex then break end
-                        end
-                        bestIndex = foundPrioIndex or 1
-                    else
-                        bestIndex = 1
-                    end
-                end
-                
-                SharedState.SelectedPetData = pets[bestIndex]
-            end
-        end)
+    prompt.MaxActivationDistance = 9e9
+    prompt.RequiresLineOfSight = false
+    prompt.ClickablePrompt = true
+
+    local duration = (typeof(HOLD_DURATION) == "number") and HOLD_DURATION or 0.5
+    if Config.InstantSteal then duration = 0.1 end
+
+    if _G.TriggerStealProgress then
+        _G.TriggerStealProgress(duration, petName)
     end
+
+    if Config.InstantSteal and _G.executeInstantSteal then
+         pcall(function() _G.executeInstantSteal(prompt) end)
+    else
+        local usedFire = pcall(function()
+            fireproximityprompt(prompt, 9e9, duration)
+        end)
+
+        if not usedFire then
+            task.spawn(function()
+                 pcall(function()
+                    prompt:InputHoldBegin()
+                    task.wait(duration)
+                    prompt:InputHoldEnd()
+                 end)
+            end)
+        end
+    end
+end
+
+-- 1. TARGET SELECTOR → Scheduler (plus de while true)
+Scheduler:Add("target_selector", 0.5, 0.15, function()
+    pcall(function()
+        local pets = SharedState.AllAnimalsCache or {}
+        if #pets > 0 then
+            local bestIndex = 1
+            
+            if Config.ManualTargetUID then
+                local found = false
+                for i, p in ipairs(pets) do
+                    if p.uid == Config.ManualTargetUID then bestIndex = i; found = true; break end
+                end
+                if not found then Config.ManualTargetUID = nil end
+            end
+
+            if not Config.ManualTargetUID then
+                if Config.StealPriority then
+                    local foundPrioIndex = nil
+                    for _, pName in ipairs(PRIORITY_LIST) do
+                        local searchName = pName:lower()
+                        for i, p in ipairs(pets) do 
+                            if p.name and p.name:lower() == searchName then foundPrioIndex = i; break end 
+                        end
+                        if foundPrioIndex then break end
+                    end
+                    bestIndex = foundPrioIndex or 1
+                else
+                    bestIndex = 1
+                end
+            end
+            
+            SharedState.SelectedPetData = pets[bestIndex]
+        end
+    end)
 end)
 
--- 2. AUTO STEAL LOOP (DANS SA BULLE POUR NE RIEN BLOQUER)
-task.spawn(function()
-    -- Méthode de vol ultra-rapide (Bypass)
-    local function triggerPrompt(prompt, petName)
-        if not prompt or not prompt:IsDescendantOf(workspace) then return end
-
-        prompt.MaxActivationDistance = 9e9
-        prompt.RequiresLineOfSight = false
-        prompt.ClickablePrompt = true
-
-        local duration = (typeof(HOLD_DURATION) == "number") and HOLD_DURATION or 0.5
-        if Config.InstantSteal then duration = 0.1 end
-
-        -- 🔥 APPEL DE L'ANIMATION DE LA BARRE
-        if _G.TriggerStealProgress then
-            _G.TriggerStealProgress(duration, petName)
+-- 2. AUTO STEAL LOOP → Scheduler (plus de while true)
+Scheduler:Add("auto_steal", 0.15, 0.05, function()
+    local autoStealEnabled = (Config.StealHighest or Config.StealNearest or Config.StealPriority or Config.ManualTargetUID)
+    if not autoStealEnabled then return end
+    
+    local promptToTrigger = nil
+    local plotObj = nil
+    
+    if Config.StealNearest then
+        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local minDist = math.huge
+            local plots = workspace:FindFirstChild("Plots")
+            if plots then
+                for _, desc in pairs(plots:GetDescendants()) do
+                    if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
+                        local part = desc.Parent
+                        local realPart = part:IsA("Attachment") and part.Parent or part
+                        if realPart and realPart:IsA("BasePart") then
+                            local dist = (hrp.Position - realPart.Position).Magnitude
+                            if dist < minDist then
+                                minDist = dist
+                                promptToTrigger = desc
+                                
+                                local current = desc
+                                while current and current.Parent and current.Parent ~= plots do
+                                    current = current.Parent
+                                end
+                                if current then plotObj = current end
+                            end
+                        end
+                    end
+                end
+            end
         end
-
-        if Config.InstantSteal and _G.executeInstantSteal then
-             pcall(function() _G.executeInstantSteal(prompt) end)
-        else
-            local usedFire = pcall(function()
-                fireproximityprompt(prompt, 9e9, duration)
-            end)
-
-            if not usedFire then
-                task.spawn(function()
-                     pcall(function()
-                        prompt:InputHoldBegin()
-                        task.wait(duration)
-                        prompt:InputHoldEnd()
-                     end)
-                end)
+    else
+        local targetData = SharedState.SelectedPetData
+        if targetData then
+            plotObj = workspace.Plots:FindFirstChild(targetData.plot)
+            if plotObj then
+                local podiums = plotObj:FindFirstChild("AnimalPodiums")
+                local pod = podiums and podiums:FindFirstChild(tostring(targetData.slot))
+                if pod then
+                    for _, desc in pairs(pod:GetDescendants()) do
+                        if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
+                            promptToTrigger = desc
+                            break
+                        end
+                    end
+                end
             end
         end
     end
 
-    while true do
-        task.wait(0.15) 
-        
-        local autoStealEnabled = (Config.StealHighest or Config.StealNearest or Config.StealPriority or Config.ManualTargetUID)
-        if not autoStealEnabled then continue end
-        
-        local promptToTrigger = nil
-        local plotObj = nil
-        
-        -- 🥷 SI NEAREST EST ACTIVÉ
+    if promptToTrigger then
+        local targetName = "TARGET"
         if Config.StealNearest then
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local minDist = math.huge
-                local plots = workspace:FindFirstChild("Plots")
-                if plots then
-                    for _, desc in pairs(plots:GetDescendants()) do
-                        if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
-                            local part = desc.Parent
-                            local realPart = part:IsA("Attachment") and part.Parent or part
-                            if realPart and realPart:IsA("BasePart") then
-                                local dist = (hrp.Position - realPart.Position).Magnitude
-                                if dist < minDist then
-                                    minDist = dist
-                                    promptToTrigger = desc
-                                    
-                                    local current = desc
-                                    while current and current.Parent and current.Parent ~= plots do
-                                        current = current.Parent
-                                    end
-                                    if current then plotObj = current end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        else
-            -- 🎯 SINON (Priority/Highest/Manual)
-            local targetData = SharedState.SelectedPetData
-            if targetData then
-                plotObj = workspace.Plots:FindFirstChild(targetData.plot)
-                if plotObj then
-                    local podiums = plotObj:FindFirstChild("AnimalPodiums")
-                    local pod = podiums and podiums:FindFirstChild(tostring(targetData.slot))
-                    if pod then
-                        for _, desc in pairs(pod:GetDescendants()) do
-                            if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
-                                promptToTrigger = desc
-                                break
-                            end
-                        end
-                    end
-                end
-            end
+            targetName = "NEAREST TARGET"
+        elseif SharedState.SelectedPetData then
+            targetName = SharedState.SelectedPetData.name
         end
-
-        -- 🚀 ACTIVATION DU VOL
-        if promptToTrigger then
-            local targetName = "TARGET"
-            if Config.StealNearest then
-                targetName = "NEAREST TARGET"
-            elseif SharedState.SelectedPetData then
-                targetName = SharedState.SelectedPetData.name
-            end
-            
-            triggerPrompt(promptToTrigger, targetName)
-            
-            if Config.AutoUnlockOnSteal and plotObj then 
-                pcall(function()
-                    local unlockFolder = plotObj:FindFirstChild("Unlock")
-                    if unlockFolder then
-                        for _, item in ipairs(unlockFolder:GetChildren()) do
-                            for _, desc in ipairs(item:GetDescendants()) do
-                                if desc:IsA("ProximityPrompt") and desc.Enabled then
-                                    if fireproximityprompt then pcall(function() fireproximityprompt(desc) end) end
-                                 end
-                            end
+        
+        triggerPrompt(promptToTrigger, targetName)
+        
+        if Config.AutoUnlockOnSteal and plotObj then 
+            pcall(function()
+                local unlockFolder = plotObj:FindFirstChild("Unlock")
+                if unlockFolder then
+                    for _, item in ipairs(unlockFolder:GetChildren()) do
+                        for _, desc in ipairs(item:GetDescendants()) do
+                            if desc:IsA("ProximityPrompt") and desc.Enabled then
+                                if fireproximityprompt then pcall(function() fireproximityprompt(desc) end) end
+                             end
                         end
                     end
-                 end)
-            end
+                end
+             end)
         end
     end
 end)
@@ -1850,10 +1885,11 @@ if Config.TpSettings and Config.TpSettings.TpOnLoad then
     local hum = char:WaitForChild("Humanoid", 10)
 
     if hrp and hum then
-        task.wait(1.5)
+        -- Laisse 3 secondes au Scheduler pour scanner la map
+        task.wait(3)
 
         local waitLimit = 0
-        while not SharedState.SelectedPetData and waitLimit < 50 do
+        while not SharedState.SelectedPetData and waitLimit < 20 do
             task.wait(0.2)
             waitLimit = waitLimit + 1
         end
@@ -1865,10 +1901,9 @@ if Config.TpSettings and Config.TpSettings.TpOnLoad then
             hrp.AssemblyAngularVelocity = Vector3.zero
             if State then State.isTpMoving = false end 
             
-            task.spawn(function()
-                pcall(runAutoSnipe)
-            end)
+            pcall(runAutoSnipe)
             
+            -- Attendre que le TP finisse avant de charger le UI
             task.wait(2)
             warn("tp did now goon")
         else
@@ -1912,16 +1947,15 @@ local function applyVisuals(target)
     local function getClosestSentry()
         local _, hrp = getChar()
         local closest, shortestDist = nil, math.huge
-        for _, inst in ipairs(Workspace:GetDescendants()) do
-            if inst.Name:match("^Sentry_") then
-                if hasExclamation(inst) then
-                    local root = inst:IsA("BasePart") and inst or inst:FindFirstChildWhichIsA("BasePart", true)
-                    if root then
-                        local dist = (hrp.Position - root.Position).Magnitude
-                        if dist < shortestDist then
-                            shortestDist = dist
-                            closest = inst
-                        end
+        -- Utilise le cache event-driven au lieu de GetDescendants()
+        for inst in pairs(_sentryCache) do
+            if inst.Parent and hasExclamation(inst) then
+                local root = inst:IsA("BasePart") and inst or inst:FindFirstChildWhichIsA("BasePart", true)
+                if root then
+                    local dist = (hrp.Position - root.Position).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        closest = inst
                     end
                 end
             end
@@ -1929,36 +1963,29 @@ local function applyVisuals(target)
          return closest
     end
 
-    while true do
-        if Config.AutoDestroyTurrets then
-            if LocalPlayer:GetAttribute("Stealing") == true then
-                task.wait(0.5)
-            else
-                local targetSentry = getClosestSentry()
-                 if targetSentry then
-                    while targetSentry and targetSentry.Parent and (LocalPlayer:GetAttribute("Stealing") ~= true) do
-                        local char, hrp, hum = getChar()
-                        local bat = LocalPlayer.Backpack:FindFirstChild("Bat") or char:FindFirstChild("Bat")
-                         applyVisuals(targetSentry)
-                        local offset = hrp.CFrame.LookVector * 4
-                        local targetCF = CFrame.new(hrp.Position + offset, hrp.Position)
-                        if targetSentry:IsA("Model") then
-                            targetSentry:PivotTo(targetCF)
-                        elseif targetSentry:IsA("BasePart") then
-                            targetSentry.CFrame = targetCF
-                        end
-                        if bat then
-                            if bat.Parent ~= char then hum:EquipTool(bat) end
-                            bat:Activate()
-                        end
-                        task.wait(0.1)
-                        if not hasExclamation(targetSentry) then break end
-                    end
-                 end
+    -- Auto Turret → Scheduler (plus de while true)
+    Scheduler:Add("auto_turret", 0.1, 0.04, function()
+        if not Config.AutoDestroyTurrets then return end
+        if LocalPlayer:GetAttribute("Stealing") == true then return end
+        
+        local targetSentry = getClosestSentry()
+        if targetSentry and targetSentry.Parent then
+            local char, hrp, hum = getChar()
+            local bat = LocalPlayer.Backpack:FindFirstChild("Bat") or char:FindFirstChild("Bat")
+            applyVisuals(targetSentry)
+            local offset = hrp.CFrame.LookVector * 4
+            local targetCF = CFrame.new(hrp.Position + offset, hrp.Position)
+            if targetSentry:IsA("Model") then
+                targetSentry:PivotTo(targetCF)
+            elseif targetSentry:IsA("BasePart") then
+                targetSentry.CFrame = targetCF
+            end
+            if bat then
+                if bat.Parent ~= char then hum:EquipTool(bat) end
+                bat:Activate()
             end
         end
-        task.wait(0.1)
-    end
+    end)
 end)
 -- =========================================================
 -- 🛒 AUTO BUY ENGINE & UI (CONVEYOR BELT) - BULLY HUB
@@ -1995,8 +2022,8 @@ local function destroyRing()
     if existing then existing:Destroy() end
 end
 
--- Suivi du joueur par l'anneau visuel
-RunService.Heartbeat:Connect(function()
+-- Suivi du joueur par l'anneau visuel → Scheduler
+Scheduler:Add("autobuy_ring", 0.016, 0.005, function()
     if not autoBuyActive then return end
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -2159,14 +2186,14 @@ end
                 task.wait(0.3)
             end
         end)
-        carpetLockConn = RunService.Heartbeat:Connect(function()
+        Scheduler:Add("carpet_lock", 0.3, 0.1, function()
             if not autoBuyActive then return end
             ensureCarpet()
         end)
     end
 
     local function stopCarpetLock()
-        if carpetLockConn then carpetLockConn:Disconnect(); carpetLockConn = nil end
+        Scheduler:Remove("carpet_lock")
     end
 
     -- HOVER ENGINE (Lévitation indétectable via BodyPosition)
@@ -2197,7 +2224,7 @@ end
         if bodyPos then bodyPos:Destroy(); bodyPos = nil end
     end
 
-    RunService.Heartbeat:Connect(function()
+    Scheduler:Add("hover_engine", 0.016, 0.005, function()
         if not autoBuyActive or not partAlive() then destroyBodyPos(); return end
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -2207,55 +2234,49 @@ end
         bp.Position = above
     end)
 
-    -- BUY SPAMMER (Vitesse max)
-    task.spawn(function()
-        while true do
-            task.wait(BUY_INTERVAL)
-            if not autoBuyActive then continue end
-            if not partAlive() then continue end
-            if promptAlive() then firePurchaseNatural(lockedTarget.prompt) end
-        end
+    -- BUY SPAMMER → Scheduler
+    Scheduler:Add("buy_spammer", BUY_INTERVAL, 0.02, function()
+        if not autoBuyActive then return end
+        if not partAlive() then return end
+        if promptAlive() then firePurchaseNatural(lockedTarget.prompt) end
     end)
 
-    -- SCANNER CIBLE (Cible intelligemment la base)
-    task.spawn(function()
-        while true do
-            task.wait(0.25)
-            if not autoBuyActive then
+    -- SCANNER CIBLE → Scheduler
+    Scheduler:Add("buy_scanner", 0.25, 0.08, function()
+        if not autoBuyActive then
+            lockedTarget=nil; lockedPart=nil; lockedModel=nil
+            stopCarpetLock(); destroyBodyPos()
+            return
+        end
+
+        if lockedPart or lockedModel then
+            if not partAlive() then
                 lockedTarget=nil; lockedPart=nil; lockedModel=nil
-                stopCarpetLock(); destroyBodyPos()
-                continue
             end
+            return
+        end
 
-            if lockedPart or lockedModel then
-                if not partAlive() then
-                    lockedTarget=nil; lockedPart=nil; lockedModel=nil
-                end
-                continue
-            end
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
 
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then continue end
+        local radius = Config.AutoBuyRange or DETECT_RADIUS
+        local best,bestDist = nil,math.huge
 
-            local radius = Config.AutoBuyRange or DETECT_RADIUS
-            local best,bestDist = nil,math.huge
-
-            for _,entry in ipairs(SharedState.ConveyorAnimals) do
-                if entry.prompt and entry.prompt.Parent and entry.prompt.Enabled and entry.part and entry.part.Parent then
-                    local d = (hrp.Position - entry.part.Position).Magnitude
-                    if d <= radius and d < bestDist then
-                        bestDist=d; best=entry
-                    end
+        for _,entry in ipairs(SharedState.ConveyorAnimals) do
+            if entry.prompt and entry.prompt.Parent and entry.prompt.Enabled and entry.part and entry.part.Parent then
+                local d = (hrp.Position - entry.part.Position).Magnitude
+                if d <= radius and d < bestDist then
+                    bestDist=d; best=entry
                 end
             end
+        end
 
-            if best then
-                lockedTarget = best
-                lockedPart = best.part
-                lockedModel = best.model or best.part.Parent
-                startCarpetLock()
-            end
+        if best then
+            lockedTarget = best
+            lockedPart = best.part
+            lockedModel = best.model or best.part.Parent
+            startCarpetLock()
         end
     end)
 
@@ -2336,7 +2357,7 @@ do
         plotBeam.FaceCamera = true; plotBeam.LightEmission = 1; plotBeam.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255)); plotBeam.Width0 = 0.7; plotBeam.Width1 = 0.7
     end
     _G.resetPlotBeam = function() if plotBeam then pcall(function() plotBeam:Destroy() end) end; if plotBeamAttachment0 then pcall(function() plotBeamAttachment0:Destroy() end) end; if plotBeamAttachment1 then pcall(function() plotBeamAttachment1:Destroy() end) end; plotBeam, plotBeamAttachment0, plotBeamAttachment1 = nil, nil, nil end
-    task.spawn(function() local c = 0; RunService.Heartbeat:Connect(function() if not Config.LineToBase then return end; c = c + 1; if c >= 30 then c = 0; if not plotBeam or not plotBeam.Parent then pcall(createPlotBeam) end end end) end)
+    Scheduler:Add("plot_beam_check", 0.5, 0.15, function() if not Config.LineToBase then return end; if not plotBeam or not plotBeam.Parent then pcall(createPlotBeam) end end)
 
     local playerBillboards = {}
     local function makePlayerBillboard(player)
@@ -2363,7 +2384,7 @@ do
         end
     end
     _G.clearPlayerESPAll = clearPlayerESPAll
-    task.spawn(function() while true do task.wait(0.5); if Config.PlayerESP then for _, player in ipairs(Players:GetPlayers()) do pcall(refreshPlayerESP, player) end else pcall(clearPlayerESPAll) end end end)
+    Scheduler:Add("player_esp", 0.5, 0.15, function() if Config.PlayerESP then for _, player in ipairs(Players:GetPlayers()) do pcall(refreshPlayerESP, player) end else pcall(clearPlayerESPAll) end end)
 
     local duelBaseHighlights, duelBaseBillboards = {}, {}
     local function clearDuelBaseVisuals()
@@ -2424,28 +2445,25 @@ local function createDuelBaseMarker(plot, sign)
     end
     
 
-    task.spawn(function()
-        while true do
-            task.wait(1)
-            if Config.DuelBaseESP then
-                pcall(function()
-                    for _, plot in ipairs(Workspace:FindFirstChild("Plots") and Workspace.Plots:GetChildren() or {}) do
-                        local sign = plot:FindFirstChild("PlotSign")
-                        if sign then
-                            local textLabel = sign:FindFirstChild("SurfaceGui") and sign.SurfaceGui:FindFirstChild("Frame") and sign.SurfaceGui.Frame:FindFirstChild("TextLabel")
-                            if textLabel and textLabel.Text ~= "Empty Base" then
-                                local nickname = textLabel.Text:match("^(.-)'") or textLabel.Text; local ownerPlayer = nil
-                                for _, p in ipairs(Players:GetPlayers()) do if p.DisplayName == nickname or p.Name == nickname then ownerPlayer = p; break end end
-                                if ownerPlayer and ownerPlayer:GetAttribute("__duels_block_steal") == true then createDuelBaseMarker(plot, sign) else
-                                    if duelBaseHighlights[plot.Name] then duelBaseHighlights[plot.Name]:Destroy(); duelBaseHighlights[plot.Name] = nil end
-                                    if duelBaseBillboards[plot.Name] then duelBaseBillboards[plot.Name]:Destroy(); duelBaseBillboards[plot.Name] = nil end
-                                end
+    Scheduler:Add("duel_base_esp", 1.0, 0.3, function()
+        if Config.DuelBaseESP then
+            pcall(function()
+                for _, plot in ipairs(Workspace:FindFirstChild("Plots") and Workspace.Plots:GetChildren() or {}) do
+                    local sign = plot:FindFirstChild("PlotSign")
+                    if sign then
+                        local textLabel = sign:FindFirstChild("SurfaceGui") and sign.SurfaceGui:FindFirstChild("Frame") and sign.SurfaceGui.Frame:FindFirstChild("TextLabel")
+                        if textLabel and textLabel.Text ~= "Empty Base" then
+                            local nickname = textLabel.Text:match("^(.-)'") or textLabel.Text; local ownerPlayer = nil
+                            for _, p in ipairs(Players:GetPlayers()) do if p.DisplayName == nickname or p.Name == nickname then ownerPlayer = p; break end end
+                            if ownerPlayer and ownerPlayer:GetAttribute("__duels_block_steal") == true then createDuelBaseMarker(plot, sign) else
+                                if duelBaseHighlights[plot.Name] then duelBaseHighlights[plot.Name]:Destroy(); duelBaseHighlights[plot.Name] = nil end
+                                if duelBaseBillboards[plot.Name] then duelBaseBillboards[plot.Name]:Destroy(); duelBaseBillboards[plot.Name] = nil end
                             end
                         end
                     end
-                end)
-            else pcall(clearDuelBaseVisuals) end
-        end
+                end
+            end)
+        else pcall(clearDuelBaseVisuals) end
     end)
 
     local brainrotBillboards = {}
@@ -2456,79 +2474,77 @@ local function createDuelBaseMarker(plot, sign)
     end
     _G.clearBrainrotESP = clearBrainrotESP
 
-    task.spawn(function() 
-        while task.wait(1) do 
-            if Config.BrainrotESP and SharedState.AllAnimalsCache then 
-                local seen = {}
-                for _, data in ipairs(SharedState.AllAnimalsCache) do
-                    if data.genValue and data.genValue >= 10000000 then 
-                        seen[data.uid] = true
-                        if not brainrotBillboards[data.uid] then
+    Scheduler:Add("brainrot_esp", 1.0, 0, function()
+        if Config.BrainrotESP and SharedState.AllAnimalsCache then 
+            local seen = {}
+            for _, data in ipairs(SharedState.AllAnimalsCache) do
+                if data.genValue and data.genValue >= 10000000 then 
+                    seen[data.uid] = true
+                    if not brainrotBillboards[data.uid] then
+                        local plotObj = Workspace.Plots:FindFirstChild(data.plot)
+                        local targetBase = plotObj and plotObj:FindFirstChild("AnimalPodiums") and plotObj.AnimalPodiums:FindFirstChild(data.slot) and plotObj.AnimalPodiums[data.slot]:FindFirstChild("Base")
+                        if targetBase then
+                            local bb = Instance.new("BillboardGui")
+                            bb.Size = UDim2.new(0, 170, 0, 44)
+                            bb.StudsOffset = Vector3.new(0, 2, 0)
+                            bb.AlwaysOnTop = true
+                            ParentGUI(bb)
+                            bb.Adornee = targetBase
+                            
+                            local color = (data.mutation and data.mutation ~= "None" and MUT_COLORS[data.mutation]) or Color3.fromRGB(0, 255, 180)
+                            
+                            local container = Instance.new("Frame", bb)
+                            container.Size = UDim2.new(1, 0, 1, 0)
+                            container.BackgroundColor3 = Color3.fromRGB(15, 15, 20) -- Fond sombre très propre
+                            container.BackgroundTransparency = 0.15
+                            Instance.new("UICorner", container).CornerRadius = UDim.new(0, 8)
+                            
+                            local stroke = Instance.new("UIStroke", container)
+                            stroke.Color = color
+                            stroke.Thickness = 1.5
+                            stroke.Transparency = 0.5
+                            
+                            -- Un petit point de couleur stylé à côté du nom
+                            local dot = Instance.new("Frame", container)
+                            dot.Size = UDim2.new(0, 8, 0, 8)
+                            dot.Position = UDim2.new(0, 10, 0, 10)
+                            dot.BackgroundColor3 = color
+                            Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+                            local nLbl = Instance.new("TextLabel", container)
+                            nLbl.Size = UDim2.new(1, -26, 0, 20)
+                            nLbl.Position = UDim2.new(0, 24, 0, 4)
+                            nLbl.BackgroundTransparency = 1
+                            nLbl.Text = data.name or "Unknown"
+                            nLbl.Font = Enum.Font.GothamBold
+                            nLbl.TextSize = 13
+                            nLbl.TextColor3 = Color3.fromRGB(255, 255, 255) -- Le nom reste en blanc pur
+                            nLbl.TextXAlignment = Enum.TextXAlignment.Left
+                            
+                            local gLbl = Instance.new("TextLabel", container)
+                            gLbl.Size = UDim2.new(1, -26, 0, 16)
+                            gLbl.Position = UDim2.new(0, 24, 0, 24)
+                            gLbl.BackgroundTransparency = 1
+                            gLbl.Text = data.genText or ""
+                            gLbl.Font = Enum.Font.GothamMedium
+                            gLbl.TextSize = 12
+                            gLbl.TextColor3 = color -- La valeur prend la couleur de la rareté
+                            gLbl.TextXAlignment = Enum.TextXAlignment.Left
+                            
+                            brainrotBillboards[data.uid] = {bb = bb}
+                        end
+                    else
+                        if brainrotBillboards[data.uid].bb and not brainrotBillboards[data.uid].bb.Adornee then
                             local plotObj = Workspace.Plots:FindFirstChild(data.plot)
                             local targetBase = plotObj and plotObj:FindFirstChild("AnimalPodiums") and plotObj.AnimalPodiums:FindFirstChild(data.slot) and plotObj.AnimalPodiums[data.slot]:FindFirstChild("Base")
-                            if targetBase then
-local bb = Instance.new("BillboardGui")
-                                bb.Size = UDim2.new(0, 170, 0, 44)
-                                bb.StudsOffset = Vector3.new(0, 2, 0)
-                                bb.AlwaysOnTop = true
-                                ParentGUI(bb)
-                                bb.Adornee = targetBase
-                                
-                                local color = (data.mutation and data.mutation ~= "None" and MUT_COLORS[data.mutation]) or Color3.fromRGB(0, 255, 180)
-                                
-                                local container = Instance.new("Frame", bb)
-                                container.Size = UDim2.new(1, 0, 1, 0)
-                                container.BackgroundColor3 = Color3.fromRGB(15, 15, 20) -- Fond sombre très propre
-                                container.BackgroundTransparency = 0.15
-                                Instance.new("UICorner", container).CornerRadius = UDim.new(0, 8)
-                                
-                                local stroke = Instance.new("UIStroke", container)
-                                stroke.Color = color
-                                stroke.Thickness = 1.5
-                                stroke.Transparency = 0.5
-                                
-                                -- Un petit point de couleur stylé à côté du nom
-                                local dot = Instance.new("Frame", container)
-                                dot.Size = UDim2.new(0, 8, 0, 8)
-                                dot.Position = UDim2.new(0, 10, 0, 10)
-                                dot.BackgroundColor3 = color
-                                Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
-
-                                local nLbl = Instance.new("TextLabel", container)
-                                nLbl.Size = UDim2.new(1, -26, 0, 20)
-                                nLbl.Position = UDim2.new(0, 24, 0, 4)
-                                nLbl.BackgroundTransparency = 1
-                                nLbl.Text = data.name or "Unknown"
-                                nLbl.Font = Enum.Font.GothamBold
-                                nLbl.TextSize = 13
-                                nLbl.TextColor3 = Color3.fromRGB(255, 255, 255) -- Le nom reste en blanc pur
-                                nLbl.TextXAlignment = Enum.TextXAlignment.Left
-                                
-                                local gLbl = Instance.new("TextLabel", container)
-                                gLbl.Size = UDim2.new(1, -26, 0, 16)
-                                gLbl.Position = UDim2.new(0, 24, 0, 24)
-                                gLbl.BackgroundTransparency = 1
-                                gLbl.Text = data.genText or ""
-                                gLbl.Font = Enum.Font.GothamMedium
-                                gLbl.TextSize = 12
-                                gLbl.TextColor3 = color -- La valeur prend la couleur de la rareté
-                                gLbl.TextXAlignment = Enum.TextXAlignment.Left
-                                
-                                brainrotBillboards[data.uid] = {bb = bb}
-                            end
-                        else
-                            if brainrotBillboards[data.uid].bb and not brainrotBillboards[data.uid].bb.Adornee then
-                                local plotObj = Workspace.Plots:FindFirstChild(data.plot)
-                                local targetBase = plotObj and plotObj:FindFirstChild("AnimalPodiums") and plotObj.AnimalPodiums:FindFirstChild(data.slot) and plotObj.AnimalPodiums[data.slot]:FindFirstChild("Base")
-                                brainrotBillboards[data.uid].bb.Adornee = targetBase
-                            end
+                            brainrotBillboards[data.uid].bb.Adornee = targetBase
                         end
                     end
                 end
-                for uid, entry in pairs(brainrotBillboards) do if not seen[uid] then if entry.bb then entry.bb:Destroy() end; brainrotBillboards[uid] = nil end end
-            else 
-                pcall(clearBrainrotESP) 
-            end 
+            end
+            for uid, entry in pairs(brainrotBillboards) do if not seen[uid] then if entry.bb then entry.bb:Destroy() end; brainrotBillboards[uid] = nil end end
+        else 
+            pcall(clearBrainrotESP) 
         end 
     end)
 
@@ -2538,44 +2554,41 @@ local bb = Instance.new("BillboardGui")
         subspaceMineESPData = {}
     end
     _G.clearSubspaceMines = clearSubspaceMines
-    task.spawn(function()
-        while true do
-            task.wait(0.5)
-            if Config.SubspaceMineESP then
-                pcall(function()
-                    local toolsFolder = Workspace:FindFirstChild("ToolsAdds")
-                    if toolsFolder then
-                        local currentMines = {}
-                        for _, obj in pairs(toolsFolder:GetChildren()) do
-                            if obj.Name:match("^SubspaceTripmine") and obj:IsA("BasePart") then
-                                currentMines[obj] = true
-                                if not subspaceMineESPData[obj] then
-                                    local ownerName = obj.Name:match("SubspaceTripmine(.+)") or "Unknown"
-                                    local s = Instance.new("SelectionBox")
-                                    ParentGUI(s)
-                                    s.Adornee = obj; s.Color3 = Color3.fromRGB(167, 142, 255); s.LineThickness = 0.05
-                                    local b = Instance.new("BillboardGui")
-                                    ParentGUI(b)
-                                    b.Adornee = obj; b.Size = UDim2.new(0, 250, 0, 50); b.StudsOffset = Vector3.new(0, 2.5, 0); b.AlwaysOnTop = true 
-                                    local lbl = Instance.new("TextLabel", b); lbl.Size = UDim2.new(1,0,1,0); lbl.BackgroundTransparency = 1; lbl.Text = ownerName .. "'s Subspace Mine"; lbl.TextColor3 = Color3.fromRGB(167, 142, 255); lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 16
-                                    subspaceMineESPData[obj] = {s = s, b = b}
-                                end
-                            end
-                        end
-                        for mineObj, data in pairs(subspaceMineESPData) do
-                            if not currentMines[mineObj] or not mineObj.Parent then
-                                if data.s then data.s:Destroy() end; if data.b then data.b:Destroy() end; subspaceMineESPData[mineObj] = nil
+    Scheduler:Add("subspace_mine_esp", 0.5, 0, function()
+        if Config.SubspaceMineESP then
+            pcall(function()
+                local toolsFolder = Workspace:FindFirstChild("ToolsAdds")
+                if toolsFolder then
+                    local currentMines = {}
+                    for _, obj in pairs(toolsFolder:GetChildren()) do
+                        if obj.Name:match("^SubspaceTripmine") and obj:IsA("BasePart") then
+                            currentMines[obj] = true
+                            if not subspaceMineESPData[obj] then
+                                local ownerName = obj.Name:match("SubspaceTripmine(.+)") or "Unknown"
+                                local s = Instance.new("SelectionBox")
+                                ParentGUI(s)
+                                s.Adornee = obj; s.Color3 = Color3.fromRGB(167, 142, 255); s.LineThickness = 0.05
+                                local b = Instance.new("BillboardGui")
+                                ParentGUI(b)
+                                b.Adornee = obj; b.Size = UDim2.new(0, 250, 0, 50); b.StudsOffset = Vector3.new(0, 2.5, 0); b.AlwaysOnTop = true 
+                                local lbl = Instance.new("TextLabel", b); lbl.Size = UDim2.new(1,0,1,0); lbl.BackgroundTransparency = 1; lbl.Text = ownerName .. "'s Subspace Mine"; lbl.TextColor3 = Color3.fromRGB(167, 142, 255); lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 16
+                                subspaceMineESPData[obj] = {s = s, b = b}
                             end
                         end
                     end
-                end)
-            else pcall(clearSubspaceMines) end
-        end
+                    for mineObj, data in pairs(subspaceMineESPData) do
+                        if not currentMines[mineObj] or not mineObj.Parent then
+                            if data.s then data.s:Destroy() end; if data.b then data.b:Destroy() end; subspaceMineESPData[mineObj] = nil
+                        end
+                    end
+                end
+            end)
+        else pcall(clearSubspaceMines) end
     end)
 
     local tracerFolder = Instance.new("Folder", Workspace); tracerFolder.Name = "XiTracers"
     local currentTracerBeam, currentAtt0, currentAtt1 = nil, nil, nil
-    RunService.Heartbeat:Connect(function()
+    Scheduler:Add("tracer_loop", 0.016, 0, function()
         if not Config.TracerEnabled then
             if currentTracerBeam then currentTracerBeam:Destroy() currentTracerBeam=nil end
             if currentAtt0 then currentAtt0:Destroy() currentAtt0=nil end
@@ -2803,36 +2816,32 @@ local function createBaseTimerESP(plot, mainPart)
     return bb
 end
 
-task.spawn(function()
-    local plotsFolder = Workspace:WaitForChild("Plots", 10)
-    while true do
-        task.wait(0.5) -- Optimisé pour ne pas faire laguer le client
-        if Config.BaseTimerESP and plotsFolder then
-            pcall(function()
-                for _, plot in ipairs(plotsFolder:GetChildren()) do
-                    local purchases = plot:FindFirstChild("Purchases")
-                    local plotBlock = purchases and purchases:FindFirstChild("PlotBlock")
-                    local mainPart = plotBlock and plotBlock:FindFirstChild("Main")
-                    local billboard = baseEspInstances[plot.Name]
+Scheduler:Add("base_timer_esp", 0.5, 0, function()
+    local plotsFolder = Workspace:FindFirstChild("Plots")
+    if Config.BaseTimerESP and plotsFolder then
+        pcall(function()
+            for _, plot in ipairs(plotsFolder:GetChildren()) do
+                local purchases = plot:FindFirstChild("Purchases")
+                local plotBlock = purchases and purchases:FindFirstChild("PlotBlock")
+                local mainPart = plotBlock and plotBlock:FindFirstChild("Main")
+                local billboard = baseEspInstances[plot.Name]
 
-                    local timeLabel = mainPart and mainPart:FindFirstChild("BillboardGui") and mainPart.BillboardGui:FindFirstChild("RemainingTime")
+                local timeLabel = mainPart and mainPart:FindFirstChild("BillboardGui") and mainPart.BillboardGui:FindFirstChild("RemainingTime")
 
-                    if timeLabel and mainPart then
-                        billboard = billboard or createBaseTimerESP(plot, mainPart)
-                        local label = billboard:FindFirstChild("Frame") and billboard.Frame:FindFirstChild("TimeText")
-                        if label then
-                            -- On ajoute un petit sablier devant le temps
-                            label.Text = "⏳ " .. timeLabel.Text
-                        end
-                    elseif billboard then
-                        billboard:Destroy()
-                        baseEspInstances[plot.Name] = nil
+                if timeLabel and mainPart then
+                    billboard = billboard or createBaseTimerESP(plot, mainPart)
+                    local label = billboard:FindFirstChild("Frame") and billboard.Frame:FindFirstChild("TimeText")
+                    if label then
+                        label.Text = "⏳ " .. timeLabel.Text
                     end
+                elseif billboard then
+                    billboard:Destroy()
+                    baseEspInstances[plot.Name] = nil
                 end
-            end)
-        else
-            pcall(clearBaseTimerESP)
-        end
+            end
+        end)
+    else
+        pcall(clearBaseTimerESP)
     end
 end)
 
@@ -4801,9 +4810,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-task.spawn(function()
-    while true do
-        task.wait(0.2)
+    Scheduler:Add("proximity_ap", 0.2, 0, function()
         if Config.ProximityAPActive then
             pcall(function()
                 local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -4818,8 +4825,7 @@ task.spawn(function()
                 end
             end)
         end
-    end
-end)
+    end)
 
 local admCont = ApplyPanelStyle(ADM, 360, 400, 0.72, 0.55, "ADMIN PANEL", "Server Players", "ADM")
 ADM.Visible = Config.VisibleAdmin
@@ -5011,12 +5017,9 @@ local function refreshAdminPanel()
     
 end
 
-task.spawn(function() 
-    while true do 
-        task.wait(5)
-        if ADM.Visible then 
-            pcall(refreshAdminPanel) 
-        end 
+Scheduler:Add("admin_panel_refresh", 5, 0, function()
+    if ADM.Visible then 
+        pcall(refreshAdminPanel) 
     end 
 end)
 
@@ -5649,11 +5652,9 @@ task.spawn(function()
         end)
     end
 
-    -- Boucle infinie qui le supprime toutes les 1 seconde
-    while true do
+    Scheduler:Add("delete_item_controller", 1, 0, function()
         destroyItemController()
-        task.wait(1)
-    end
+    end)
 end)
 
 
@@ -5670,12 +5671,8 @@ end)
 -- =========================================================
 -- 🎈 AUTO RESET ON BALLOON & 🧹 CLEAN ERROR GUI ENGINE
 -- =========================================================
-task.spawn(function()
-    local CoreGui = game:GetService("CoreGui")
-    
-    while true do
-        task.wait(1)
-        
+    Scheduler:Add("auto_reset_balloon_loop", 1, 0, function()
+        local CoreGui = game:GetService("CoreGui")
         -- 🎈 Logic: Auto Reset On Balloon (1 SEULE FOIS)
         if Config.AutoResetOnBalloon then 
             pcall(function()
@@ -5709,8 +5706,7 @@ task.spawn(function()
                 if networkGui then networkGui:Destroy() end
             end)
         end
-    end
-end)
+    end)
 
 -- =========================================================
 -- 🛠️ FIX : FORCE LE RÉVEIL DU STEAL (PRIORITY/HIGHEST) AU LANCEMENT
@@ -6295,7 +6291,6 @@ task.spawn(function()
         end
     end
 
-    -- Active le mode nuit au démarrage si c'était sauvegardé sur ON
     if Config.DarkMode then
         _G.toggleDarkMode(true)
     end
