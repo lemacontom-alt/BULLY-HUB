@@ -3286,8 +3286,7 @@ local function ApplyPanelStyle(panel, w, h, px, py, title, subtitle, configKey)
     stroke.Thickness = 1.5
     stroke.Transparency = 0.5 
     
-    AddPremiumGlow(panel, 20, Color3.fromRGB(0, 0, 0)) -- Ombre globale douce
-    
+        
     local top = Instance.new("Frame", panel)
     top.Size = UDim2.new(1,0,0,45)
     top.BackgroundTransparency = 1
@@ -4102,6 +4101,7 @@ CreateiOSToggle(pUi, "Show Actions Panel", Config.VisibleAP or false, function(v
 CreateiOSToggle(pUi, "Show Target Panel", Config.VisibleTP or false, function(val) Config.VisibleTP = val; if TP then TP.Visible = val end; SaveConfig() end)
 CreateiOSToggle(pUi, "Show Admin Panel", Config.VisibleAdmin or false, function(val) Config.VisibleAdmin = val; if ADM then ADM.Visible = val end; SaveConfig() end)
 CreateiOSToggle(pUi, "Show Command Panel", Config.VisibleCommandPanel or false, function(val) Config.VisibleCommandPanel = val; if CMD then CMD.Visible = val end; SaveConfig() end)
+CreateiOSToggle(pUi, "Show Movement Panel", Config.VisibleMovementPanel or false, function(val) Config.VisibleMovementPanel = val; if MOV then MOV.Visible = val end; SaveConfig() end)
 -- 💡 CORRECTION DU BOUTON AUTO SELLER :
 local sellerState = true
 if Config.ShowAutoSeller ~= nil then sellerState = Config.ShowAutoSeller end
@@ -4182,6 +4182,8 @@ CreateiOSToggle(pMisc, "Clean Error GUIs", Config.CleanErrorGUIs or false, funct
     Config.CleanErrorGUIs = val
     SaveConfig()
 end)
+
+CreateiOSToggle(pMisc, "Auto Invis on Steal", Config.AutoInvisDuringSteal or false, function(val) Config.AutoInvisDuringSteal = val; SaveConfig() end)
 
 CreateSectionHeader(pMisc, "CAMERA")
 CreateSettingsSlider(pMisc, "Field of View (FOV)", Config.FOV or 70, 30, 120, function(val) Config.FOV = val; SaveConfig(); _G.updateFOV(val) end)
@@ -5339,7 +5341,448 @@ Scheduler:Add("admin_panel_refresh", 5, 0, function()
     end 
 end)
 
+-- =========================================================
+-- 🏃 MOVEMENT PANEL (GROS SLIDERS, INVIS STEAL, SPEED, ANTI-DIE)
+-- =========================================================
+MOV = Instance.new("Frame", SG)
+MOV.Name = "MovementPanel"
 
+if Config.VisibleMovementPanel == nil then Config.VisibleMovementPanel = false end
+movCont = ApplyPanelStyle(MOV, 260, 440, 0.85, 0.55, "MOVEMENT", "Player Settings", "MOV")
+MOV.Visible = Config.VisibleMovementPanel
+
+movLay = Instance.new("UIListLayout", movCont)
+movLay.Padding = UDim.new(0, 10) 
+movLay.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+-- ================= VARIABLES GLOBALES =================
+_G.InvisStealAngle = 180
+_G.SinkSliderValue = 5
+_G.invisibleStealEnabled = false
+_G.TargetWalkspeed = 25.5
+
+-- ================= BOUTONS ET TOGGLES =================
+
+btnInvisSteal = Instance.new("TextButton", movCont)
+btnInvisSteal.Size = UDim2.new(1, -16, 0, 32)
+btnInvisSteal.BackgroundColor3 = Theme.Volcanic
+btnInvisSteal.Text = "Invis Steal: OFF"
+btnInvisSteal.Font = Enum.Font.GothamBold
+btnInvisSteal.TextColor3 = Theme.White
+btnInvisSteal.TextSize = 12
+Instance.new("UICorner", btnInvisSteal).CornerRadius = UDim.new(0, 6)
+strInvis = Instance.new("UIStroke", btnInvisSteal)
+strInvis.Color = Theme.Stroke
+
+btnInvisSteal.MouseButton1Click:Connect(function()
+    if _G.toggleInvisibleSteal then
+        pcall(_G.toggleInvisibleSteal)
+        local state = _G.invisibleStealEnabled
+        btnInvisSteal.Text = "Invis Steal: " .. (state and "ON" or "OFF")
+        btnInvisSteal.TextColor3 = state and Theme.AmberON or Theme.White
+    end
+end)
+
+btnWalkspeedTog = Instance.new("TextButton", movCont)
+btnWalkspeedTog.Size = UDim2.new(1, -16, 0, 32)
+btnWalkspeedTog.BackgroundColor3 = Theme.Volcanic
+btnWalkspeedTog.Text = "Walkspeed: OFF"
+btnWalkspeedTog.Font = Enum.Font.GothamBold
+btnWalkspeedTog.TextColor3 = Theme.White
+btnWalkspeedTog.TextSize = 12
+Instance.new("UICorner", btnWalkspeedTog).CornerRadius = UDim.new(0, 6)
+strWs = Instance.new("UIStroke", btnWalkspeedTog)
+strWs.Color = Theme.Stroke
+
+wsTogState = false
+walkspeedConn = nil
+
+function enableMysticalSpeed()
+    if walkspeedConn then walkspeedConn:Disconnect() end
+    walkspeedConn = game:GetService("RunService").RenderStepped:Connect(function(deltaTime)
+        local char = game.Players.LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not hrp then return end
+        
+        if hum.WalkSpeed ~= 16 then hum.WalkSpeed = 16 end
+        
+        local moveDir = hum.MoveDirection
+        if moveDir.Magnitude > 0 then
+            extraSpeed = _G.TargetWalkspeed - 16
+            if extraSpeed > 0 then
+                hrp.CFrame = hrp.CFrame + (moveDir * (extraSpeed * deltaTime))
+            end
+        end
+    end)
+end
+
+function disableMysticalSpeed()
+    if walkspeedConn then 
+        walkspeedConn:Disconnect()
+        walkspeedConn = nil 
+    end
+end
+
+btnWalkspeedTog.MouseButton1Click:Connect(function()
+    wsTogState = not wsTogState
+    btnWalkspeedTog.Text = "Walkspeed: " .. (wsTogState and "ON" or "OFF")
+    btnWalkspeedTog.TextColor3 = wsTogState and Theme.AmberON or Theme.White
+    if wsTogState then enableMysticalSpeed() else disableMysticalSpeed() end
+end)
+
+btnCarpetSpeed = Instance.new("TextButton", movCont)
+btnCarpetSpeed.Size = UDim2.new(1, -16, 0, 32)
+btnCarpetSpeed.BackgroundColor3 = Theme.Volcanic
+btnCarpetSpeed.Text = "Carpet Speed: OFF"
+btnCarpetSpeed.Font = Enum.Font.GothamBold
+btnCarpetSpeed.TextColor3 = Theme.White
+btnCarpetSpeed.TextSize = 12
+Instance.new("UICorner", btnCarpetSpeed).CornerRadius = UDim.new(0, 6)
+strCarpet = Instance.new("UIStroke", btnCarpetSpeed)
+strCarpet.Color = Theme.Stroke
+
+carpetState = MiscState.carpetSpeedEnabled or false
+if carpetState then
+    btnCarpetSpeed.Text = "Carpet Speed: ON"
+    btnCarpetSpeed.TextColor3 = Theme.AmberON
+end
+
+btnCarpetSpeed.MouseButton1Click:Connect(function()
+    carpetState = not carpetState
+    btnCarpetSpeed.Text = "Carpet Speed: " .. (carpetState and "ON" or "OFF")
+    btnCarpetSpeed.TextColor3 = carpetState and Theme.AmberON or Theme.White
+    if _G.setCarpetSpeed then _G.setCarpetSpeed(carpetState) end
+end)
+
+movSep = Instance.new("Frame", movCont)
+movSep.Size = UDim2.new(1, -24, 0, 1)
+movSep.BackgroundColor3 = Theme.Stroke
+movSep.BorderSizePixel = 0
+
+-- ================= GROS SLIDERS (STYLE TP CONFIG) =================
+function CreateDarkSlider_Mov(parent, text, min, max, defaultVal, isDecimal, callback)
+    local sFrame = Instance.new("Frame", parent)
+    sFrame.Size = UDim2.new(1, -16, 0, 45)
+    sFrame.BackgroundTransparency = 1
+    
+    local val = math.clamp(defaultVal, min, max)
+    
+    local sTitle = Instance.new("TextLabel", sFrame)
+    sTitle.Size = UDim2.new(1, 0, 0, 16)
+    sTitle.Text = text .. ": " .. (isDecimal and string.format("%.2f", val) or tostring(math.floor(val)))
+    sTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sTitle.TextStrokeTransparency = 0
+    sTitle.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    sTitle.Font = Enum.Font.GothamBlack
+    sTitle.TextSize = 13
+    sTitle.TextXAlignment = Enum.TextXAlignment.Left
+    sTitle.BackgroundTransparency = 1
+
+    local sBg = Instance.new("Frame", sFrame)
+    sBg.Size = UDim2.new(1, 0, 0, 8)
+    sBg.Position = UDim2.new(0, 0, 0, 26)
+    sBg.BackgroundColor3 = Theme.Volcanic
+    Instance.new("UICorner", sBg).CornerRadius = UDim.new(1, 0)
+    
+    local pct = (val - min) / (max - min)
+    local sFill = Instance.new("Frame", sBg)
+    sFill.Size = UDim2.new(pct, 0, 1, 0)
+    sFill.BackgroundColor3 = Theme.AmberMain
+    Instance.new("UICorner", sFill).CornerRadius = UDim.new(1, 0)
+    
+    local knob = Instance.new("Frame", sBg)
+    knob.Size = UDim2.new(0, 16, 0, 16)
+    knob.Position = UDim2.new(pct, -8, 0.5, -8)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+    
+    local knobStroke = Instance.new("UIStroke", knob)
+    knobStroke.Color = Color3.fromRGB(0, 0, 0)
+    knobStroke.Thickness = 1.5
+
+    local sBtn = Instance.new("TextButton", sBg)
+    sBtn.Size = UDim2.new(1, 0, 1, 0)
+    sBtn.BackgroundTransparency = 1
+    sBtn.Text = ""
+
+    local dragging = false
+    local moveConnection = nil
+
+    local function updateSlider()
+        local mousePos = game:GetService("UserInputService"):GetMouseLocation()
+        local percent = math.clamp((mousePos.X - sBg.AbsolutePosition.X) / sBg.AbsoluteSize.X, 0, 1)
+        
+        sFill.Size = UDim2.new(percent, 0, 1, 0)
+        knob.Position = UDim2.new(percent, -8, 0.5, -8)
+        
+        local newVal = min + ((max - min) * percent)
+        if not isDecimal then newVal = math.floor(newVal) end
+        
+        sTitle.Text = text .. ": " .. (isDecimal and string.format("%.2f", newVal) or tostring(newVal))
+        if callback then callback(newVal) end
+    end
+
+    sBtn.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            updateSlider()
+            if moveConnection then moveConnection:Disconnect() end
+            moveConnection = game:GetService("UserInputService").InputChanged:Connect(function(moveInput)
+                if moveInput.UserInputType == Enum.UserInputType.MouseMovement or moveInput.UserInputType == Enum.UserInputType.Touch then
+                    updateSlider()
+                end
+            end)
+        end
+    end)
+    
+    game:GetService("UserInputService").InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            if dragging then
+                dragging = false
+                if moveConnection then moveConnection:Disconnect(); moveConnection = nil end
+            end
+        end
+    end)
+end
+
+CreateDarkSlider_Mov(movCont, "Walkspeed", 16, 150, 25.5, false, function(val) _G.TargetWalkspeed = val end)
+CreateDarkSlider_Mov(movCont, "Depth", 0.5, 15, 5, true, function(val) _G.SinkSliderValue = val end)
+CreateDarkSlider_Mov(movCont, "Rotation", 0, 360, 180, false, function(val) _G.InvisStealAngle = val end)
+
+-- ================= MOTEUR INVIS STEAL =================
+animPlaying = false
+tracks = {}
+clone = nil
+oldRoot = nil
+hip = nil
+connection = nil
+folderConnections = {}
+
+function removeFolders()
+    local pf = game:GetService("Workspace"):FindFirstChild(game.Players.LocalPlayer.Name)
+    if not pf then return end
+    local dr = pf:FindFirstChild("DoubleRig")
+    if dr then dr:Destroy() end
+    local cs = pf:FindFirstChild("Constraints")
+    if cs then cs:Destroy() end
+    local conn = pf.ChildAdded:Connect(function(child)
+        if child.Name == "DoubleRig" or child.Name == "Constraints" then
+            task.defer(function() child:Destroy() end)
+        end
+    end)
+    table.insert(folderConnections, conn)
+end
+
+function doClone()
+    local character = game.Players.LocalPlayer.Character
+    if character and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 then
+        hip = character.Humanoid.HipHeight
+        oldRoot = character:FindFirstChild("HumanoidRootPart")
+        if not oldRoot or not oldRoot.Parent then return false end
+        for _, c in pairs(oldRoot:GetChildren()) do
+            if c:IsA("Attachment") and (c.Name:find("Beam") or c.Name:find("Attach")) then c:Destroy() end
+        end
+        for _, c in pairs(oldRoot:GetChildren()) do if c:IsA("Beam") then c:Destroy() end end
+        local tmp = Instance.new("Model"); tmp.Parent = game
+        character.Parent = tmp
+        clone = oldRoot:Clone(); clone.Parent = character
+        oldRoot.Parent = game:GetService("Workspace").CurrentCamera
+        clone.CFrame = oldRoot.CFrame; character.PrimaryPart = clone
+        character.Parent = game:GetService("Workspace")
+        for _, v in pairs(character:GetDescendants()) do
+            if v:IsA("Weld") or v:IsA("Motor6D") then
+                if v.Part0 == oldRoot then v.Part0 = clone end
+                if v.Part1 == oldRoot then v.Part1 = clone end
+            end
+        end
+        tmp:Destroy(); return true
+    end
+    return false
+end
+
+function revertClone()
+    local character = game.Players.LocalPlayer.Character
+    if not oldRoot or not oldRoot:IsDescendantOf(game:GetService("Workspace")) or not character or character.Humanoid.Health <= 0 then return end
+    local tmp = Instance.new("Model"); tmp.Parent = game
+    character.Parent = tmp
+    oldRoot.Parent = character; character.PrimaryPart = oldRoot
+    character.Parent = game:GetService("Workspace"); oldRoot.CanCollide = true
+    for _, v in pairs(character:GetDescendants()) do
+        if v:IsA("Weld") or v:IsA("Motor6D") then
+            if v.Part0 == clone then v.Part0 = oldRoot end
+            if v.Part1 == clone then v.Part1 = oldRoot end
+        end
+    end
+    if clone then local p = clone.CFrame; clone:Destroy(); clone = nil; oldRoot.CFrame = p end
+    oldRoot = nil
+    if character and character.Humanoid then character.Humanoid.HipHeight = hip end
+end
+
+function animationTrickery()
+    local character = game.Players.LocalPlayer.Character
+    if character and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 then
+        local anim = Instance.new("Animation")
+        anim.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
+        local humanoid = character.Humanoid
+        local animator = humanoid:FindFirstChild("Animator") or Instance.new("Animator", humanoid)
+        local animTrack = animator:LoadAnimation(anim)
+        animTrack.Priority = Enum.AnimationPriority.Action4
+        animTrack:Play(0, 1, 0); anim:Destroy()
+        table.insert(tracks, animTrack)
+        animTrack.Stopped:Connect(function() if animPlaying then animationTrickery() end end)
+        task.delay(0, function()
+            animTrack.TimePosition = 0.7
+            task.delay(0.3, function() if animTrack then animTrack:AdjustSpeed(math.huge) end end)
+        end)
+    end
+end
+
+function turnOffInvis()
+    if not animPlaying then return end
+    local character = game.Players.LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    animPlaying = false; _G.invisibleStealEnabled = false
+    for _, t in pairs(tracks) do pcall(function() t:Stop() end) end
+    tracks = {}
+    if connection then connection:Disconnect(); connection = nil end
+    for _, c in ipairs(folderConnections) do if c then c:Disconnect() end end
+    folderConnections = {}
+    revertClone()
+    if humanoid then pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
+end
+
+_G.RecoveryInProgress = false -- Variable globale pour empêcher le spam de l'anti-lagback
+
+function turnOnInvis()
+    if animPlaying then return end
+    local character = game.Players.LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    animPlaying = true; _G.invisibleStealEnabled = true
+    tracks = {}; removeFolders()
+    local success = doClone()
+    
+    if success then
+        task.wait(0.05); animationTrickery()
+        local RunService = game:GetService("RunService")
+        
+        -- Variables pour l'Anti-Lagback
+        local lastSetPosition = nil
+        local skipFrames = 5
+        
+        connection = RunService.PreSimulation:Connect(function()
+            if character and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 and oldRoot then
+                local root = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    
+                    -- ================= MOTEUR ANTI-LAGBACK =================
+                    if skipFrames > 0 then 
+                        skipFrames = skipFrames - 1
+                        lastSetPosition = nil
+                    elseif lastSetPosition then
+                        local currentPos = oldRoot.Position
+                        local jumpDist = (currentPos - lastSetPosition).Magnitude
+                        
+                        -- Si le serveur te renvoie en arrière de plus de 3 studs :
+                        if jumpDist > 3 and not _G.RecoveryInProgress then
+                            lastSetPosition = nil
+                            _G.RecoveryInProgress = true
+                            
+                            -- 🚨 ALERTE VISUELLE ROBLOX NATIVE 🚨
+                            pcall(function()
+                                game:GetService("StarterGui"):SetCore("SendNotification", {
+                                    Title = "⚠️ LAGBACK DETECTED",
+                                    Text = "Auto-fixing invisible position...",
+                                    Duration = 3,
+                                    Button1 = "OK"
+                                })
+                            end)
+                            
+                            -- Désactive et réactive l'Invis Steal à la vitesse de l'éclair pour corriger le bug
+                            task.spawn(function()
+                                if _G.toggleInvisibleSteal then pcall(_G.toggleInvisibleSteal) end
+                                task.wait(0.5)
+                                if _G.toggleInvisibleSteal then pcall(_G.toggleInvisibleSteal) end
+                                _G.RecoveryInProgress = false
+                            end)
+                        end
+                    end
+                    -- =========================================================
+                    
+                    if clone then clone.CanCollide = false end
+                    for _, c in pairs(oldRoot:GetChildren()) do
+                        if c:IsA("Attachment") or c:IsA("Beam") then c:Destroy() end
+                    end
+                    
+                    local rotAngle = _G.InvisStealAngle or 180
+                    local sa = (_G.SinkSliderValue or 5) * 0.5
+                    local cf = root.CFrame - Vector3.new(0, sa, 0)
+                    oldRoot.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
+                    oldRoot.AssemblyLinearVelocity = root.AssemblyLinearVelocity; oldRoot.CanCollide = false
+                    
+                    -- Sauvegarde la position pour la prochaine frame (utile pour l'anti-lagback)
+                    lastSetPosition = oldRoot.Position
+                end
+            end
+        end)
+    end
+end
+
+_G.toggleInvisibleSteal = function()
+    if animPlaying then turnOffInvis() else turnOnInvis() end
+end
+
+game.Players.LocalPlayer.CharacterAdded:Connect(function()
+    animPlaying = false
+    _G.invisibleStealEnabled = false
+    if btnInvisSteal then
+        btnInvisSteal.Text = "Invis Steal: OFF"
+        btnInvisSteal.TextColor3 = Theme.White
+    end
+    wsTogState = false
+    if btnWalkspeedTog then
+        btnWalkspeedTog.Text = "Walkspeed: OFF"
+        btnWalkspeedTog.TextColor3 = Theme.White
+    end
+    disableMysticalSpeed()
+end)
+
+-- ================= MOTEUR ANTI-DIE =================
+_G.AntiDieConnection = nil
+_G.AntiDieDisabled = false
+
+function setupAntiDie()
+    if _G.AntiDieDisabled then return end
+    local character = game.Players.LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    if _G.AntiDieConnection then pcall(function() _G.AntiDieConnection:Disconnect() end) end
+    
+    _G.AntiDieConnection = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+        if _G.AntiDieDisabled then return end
+        if humanoid.Health <= 0 then
+            humanoid.Health = humanoid.MaxHealth
+        end
+    end)
+end
+
+_G.setupAntiDie = setupAntiDie
+
+task.spawn(function()
+    setupAntiDie()
+end)
+
+game.Players.LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    if not _G.AntiDieDisabled then
+        setupAntiDie()
+    end
+end)
 
 
 WebhookURL = "https://discord.com/api/webhooks/1495890268845641840/kOdm-FjV0t8sjY-NN3XOfkX-coImLlE-o1aiuTCQbQdau3KpZqZZZDwICE1N1aWp4yti"
@@ -5550,6 +5993,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
             TP.Visible = newState
             ADM.Visible = newState
             CMD.Visible = newState
+            MOV.Visible = newState
 
             if mobileGui then mobileGui.Enabled = true end
 
@@ -5558,6 +6002,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
             Config.VisibleTP = newState
             Config.VisibleAdmin = newState
             Config.VisibleCommandPanel = newState
+            Config.VisibleMovementPanel = newState
             
             SaveConfig()
             
@@ -6313,18 +6758,7 @@ if Config.AutoSellOnSteal ~= nil then autoSellEnabled = Config.AutoSellOnSteal e
         end)
     end
 
-    local function AddPremiumGlow(frame, radius, color)
-        local shadow = Instance.new("ImageLabel", frame)
-        shadow.BackgroundTransparency = 1
-        shadow.Position = UDim2.new(0, -radius, 0, -radius)
-        shadow.Size = UDim2.new(1, radius * 2, 1, radius * 2)
-        shadow.ZIndex = frame.ZIndex - 1
-        shadow.Image = "rbxassetid://1316045217"
-        shadow.ImageColor3 = color
-        shadow.ImageTransparency = 0.6
-        shadow.ScaleType = Enum.ScaleType.Slice
-        shadow.SliceCenter = Rect.new(10, 10, 118, 118)
-    end
+
 
 local panel = Instance.new("Frame")
     panel.Size = UDim2.new(0, 250, 0, 300)
@@ -6347,7 +6781,7 @@ local panel = Instance.new("Frame")
     stroke.Thickness = 1.5
     stroke.Transparency = 0.5
     
-    AddPremiumGlow(panel, 20, Color3.fromRGB(0, 0, 0))
+    
 
     local top = Instance.new("Frame", panel)
     top.Size = UDim2.new(1, 0, 0, 45)
@@ -6752,6 +7186,37 @@ task.spawn(function()
 
     if Config.DarkMode then
         _G.toggleDarkMode(true)
+    end
+end)
+
+-- =========================================================
+-- 👻 AUTO INVIS ON STEAL (MYSTICAL HUB)
+-- =========================================================
+game:GetService("Players").LocalPlayer:GetAttributeChangedSignal("Stealing"):Connect(function()
+    if not Config.AutoInvisDuringSteal then return end
+    
+    local isStealing = game:GetService("Players").LocalPlayer:GetAttribute("Stealing")
+    
+    if isStealing then
+        -- Active l'invisibilité si elle n'y est pas
+        if _G.toggleInvisibleSteal and not _G.invisibleStealEnabled then
+            _G.toggleInvisibleSteal()
+            -- Met à jour le bouton visuellement
+            if btnInvisSteal then
+                btnInvisSteal.Text = "Invis Steal: ON"
+                btnInvisSteal.TextColor3 = Theme.AmberON
+            end
+        end
+    else
+        -- Le vol est fini : on éteint l'invisibilité
+        if _G.toggleInvisibleSteal and _G.invisibleStealEnabled then
+            _G.toggleInvisibleSteal()
+            -- Met à jour le bouton visuellement
+            if btnInvisSteal then
+                btnInvisSteal.Text = "Invis Steal: OFF"
+                btnInvisSteal.TextColor3 = Theme.White
+            end
+        end
     end
 end)
 
